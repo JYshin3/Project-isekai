@@ -531,10 +531,11 @@ elif menu=="🔍 종목 분석" and analyze_btn:
             f"{(res['tp_s']/res['price']-1)*100:+.1f}%" if res['tp_s'] else "-",
         ],
         "설명":[
-            f"Fib {res['cfg']['fib'][0]} 눌림목","Fib {res['cfg']['fib'][1]} 눌림목",
-            f"Fib {res['cfg']['fib'][2]} 눌림목",
-            f"-{res['cfg']['stop']*100:.0f}% 또는 Fib 0.886",
-            f"+{res['cfg']['tp']*100:.0f}% 목표",
+            f"Fib {res['cfg']['fib'][0]} — 1차 진입",
+            f"Fib {res['cfg']['fib'][1]} — 2차 물타기",
+            f"Fib {res['cfg']['fib'][2]} — 3차 물타기",
+            f"평균단가 -{res['cfg']['stop']*100:.0f}% 또는 Fib 0.886",
+            f"평균단가 +{res['cfg']['tp']*100:.0f}% 전량 청산",
         ]
     }
     st.dataframe(pd.DataFrame(plan_data),use_container_width=True,hide_index=True,
@@ -582,9 +583,89 @@ elif menu=="🔍 종목 분석" and analyze_btn:
     st.dataframe(pd.DataFrame(ind_data),use_container_width=True,hide_index=True)
     st.markdown("---")
 
-    # ── 차트 ──
-    st.markdown("#### 📈 차트")
-    st.plotly_chart(draw_chart(res),use_container_width=True)
+    # ── 매수·매도 신호 요약 표 ──
+    st.markdown("#### 🎯 매수·매도 신호 요약")
+
+    # 신호 판단 기준 표
+    signal_rows = []
+
+    # 매수 신호 체크
+    checks = [
+        ("피보나치 구간 근접", res["near_fib"],
+         f"BUY1 ${res['fib_lv'][0]:.2f} 근접" if res["near_fib"] and res["fib_lv"][0] else "아직 진입 구간 아님"),
+        ("MA60 위 (추세 확인)", float(res["row"]["Close"]) > float(res["row"]["MA60"]),
+         f"현재가 ${res['price']:.2f} > MA60 ${res['row']['MA60']:.2f}" if float(res["row"]["Close"]) > float(res["row"]["MA60"]) else f"MA60 ${res['row']['MA60']:.2f} 아래"),
+        ("StochRSI 과매도", res["stoch"] < 25,
+         f"StochRSI {res['stoch']:.1f} (25 이하 = 과매도)" if res["stoch"] < 25 else f"StochRSI {res['stoch']:.1f} (아직 과매도 아님)"),
+        ("ADX 추세 강도", res["adx"] > 20,
+         f"ADX {res['adx']:.1f} (추세장)" if res["adx"] > 20 else f"ADX {res['adx']:.1f} (박스장)"),
+        ("ROC 모멘텀", res["roc"] > 0,
+         f"ROC {res['roc']:+.2f}% (상승 모멘텀)" if res["roc"] > 0 else f"ROC {res['roc']:+.2f}% (하락 모멘텀)"),
+        ("1주 수익률", res["ret_1w"] > 0,
+         f"{res['ret_1w']:+.1f}%" ),
+        ("1개월 수익률", res["ret_1m"] > 0,
+         f"{res['ret_1m']:+.1f}%"),
+        ("하락장 제외", res["regime"] != "DOWNtrend",
+         f"현재 {res['cfg']['desc']}" if res["regime"] != "DOWNtrend" else "⚠️ 하락장 — 매수 비추천"),
+    ]
+
+    for name, ok, detail in checks:
+        signal_rows.append({
+            "항목": name,
+            "결과": "✅ 충족" if ok else "❌ 미충족",
+            "세부 내용": detail,
+        })
+
+    df_signal = pd.DataFrame(signal_rows)
+    st.dataframe(df_signal, use_container_width=True, hide_index=True,
+        column_config={
+            "항목":    st.column_config.TextColumn("확인 항목", width="medium"),
+            "결과":    st.column_config.TextColumn("결과",     width="small"),
+            "세부 내용": st.column_config.TextColumn("세부 내용", width="large"),
+        })
+
+    # 최종 판정 요약
+    ok_count = sum(1 for _, ok, _ in checks if ok)
+    st.markdown(f"""
+    <div style="background:#111827;border:1px solid #1e2d4a;border-radius:10px;
+                padding:16px;margin-top:10px;text-align:center">
+      <div style="color:#6b7280;font-size:.8rem;margin-bottom:6px">조건 충족 현황</div>
+      <div style="font-size:1.5rem;font-weight:700;color:{'#00ff9d' if ok_count>=6 else '#ffd700' if ok_count>=4 else '#ff4757'}">
+        {ok_count} / {len(checks)} 충족
+      </div>
+      <div style="color:#6b7280;font-size:.8rem;margin-top:4px">
+        {'✅ 매수 진입 고려 가능' if ok_count>=6 else '⚠️ 추가 확인 필요' if ok_count>=4 else '❌ 아직 매수 시기 아님'}
+      </div>
+    </div>""", unsafe_allow_html=True)
+    st.markdown("---")
+
+    # ── 최근 가격 흐름 표 (차트 대신) ──
+    st.markdown("#### 📅 최근 20일 가격 흐름")
+    df_price = res["df"].tail(20).copy()[["Date","Open","High","Low","Close","Volume"]].reset_index(drop=True)
+    df_price["Date"] = df_price["Date"].astype(str).str[:10]
+    df_price["등락"] = df_price["Close"].pct_change().mul(100).map(
+        lambda x: f"{x:+.2f}%" if pd.notna(x) else "-")
+    df_price["신호"] = df_price.apply(lambda r:
+        "🟢 양봉" if r["Close"] > r["Open"] else "🔴 음봉", axis=1)
+    df_price["Close"] = df_price["Close"].map("${:.2f}".format)
+    df_price["High"]  = df_price["High"].map("${:.2f}".format)
+    df_price["Low"]   = df_price["Low"].map("${:.2f}".format)
+    df_price["Volume"] = df_price["Volume"].map(lambda x: f"{x/1e6:.1f}M")
+    df_price = df_price.rename(columns={
+        "Date":"날짜","Open":"시가","High":"고가","Low":"저가",
+        "Close":"종가","Volume":"거래량"
+    })[["날짜","종가","등락","신호","고가","저가","거래량"]]
+    st.dataframe(df_price.iloc[::-1].reset_index(drop=True),
+                 use_container_width=True, hide_index=True,
+        column_config={
+            "날짜":   st.column_config.TextColumn(width="small"),
+            "종가":   st.column_config.TextColumn(width="small"),
+            "등락":   st.column_config.TextColumn(width="small"),
+            "신호":   st.column_config.TextColumn(width="small"),
+            "고가":   st.column_config.TextColumn(width="small"),
+            "저가":   st.column_config.TextColumn(width="small"),
+            "거래량": st.column_config.TextColumn(width="small"),
+        })
 
 # ════════════════════════════════════════════════════════════
 # 🤖 AI 종목 추천
@@ -749,9 +830,40 @@ elif menu=="📊 백테스트" and bt_btn:
                 })
         st.markdown("---")
 
-        # ── 차트 (매매 타이밍 포함) ──
-        st.markdown("#### 📈 차트 + 매매 타이밍")
-        st.plotly_chart(draw_chart(res,trades),use_container_width=True)
+        # ── 매매 타이밍 표 ──
+        st.markdown("#### 📅 매매 타이밍 상세")
+        if trades:
+            sells_only = [t for t in trades if t["구분"] == "매도"]
+            buy_sell_pairs = []
+            buys_q = [t for t in trades if t["구분"] == "매수"]
+            sells_q = [t for t in trades if t["구분"] == "매도"]
+            for s in sells_q:
+                # 해당 매도 직전 매수 찾기
+                matching_buy = next(
+                    (b for b in reversed(buys_q) if b["날짜"] <= s["날짜"]), None)
+                pnl_val = float(s["수익률"].replace("%","").replace("+","")) if s["수익률"] != "-" else 0
+                buy_sell_pairs.append({
+                    "매수일": matching_buy["날짜"] if matching_buy else "-",
+                    "매수가": f"${matching_buy['가격']:.2f}" if matching_buy else "-",
+                    "매도일": s["날짜"],
+                    "매도가": f"${s['가격']:.2f}",
+                    "수익률": s["수익률"],
+                    "결과":   s["비고"],
+                    "레짐":   s["레짐"],
+                })
+            if buy_sell_pairs:
+                df_pairs = pd.DataFrame(buy_sell_pairs)
+                st.dataframe(df_pairs.iloc[::-1].reset_index(drop=True),
+                    use_container_width=True, hide_index=True,
+                    column_config={
+                        "매수일": st.column_config.TextColumn(width="small"),
+                        "매수가": st.column_config.TextColumn(width="small"),
+                        "매도일": st.column_config.TextColumn(width="small"),
+                        "매도가": st.column_config.TextColumn(width="small"),
+                        "수익률": st.column_config.TextColumn(width="small"),
+                        "결과":   st.column_config.TextColumn(width="small"),
+                        "레짐":   st.column_config.TextColumn(width="small"),
+                    })
 
         # ── Excel 다운로드 ──
         now_str=datetime.datetime.now().strftime("%Y%m%d_%H%M")
