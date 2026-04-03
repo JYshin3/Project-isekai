@@ -4,7 +4,3 @@ pandas>=2.0.0
 numpy>=1.26.0
 plotly>=5.20.0
 openpyxl>=3.1.0
-scikit-learn>=1.4.0
-# 선택 설치 (없어도 작동)
-# vaderSentiment>=3.3.2
-# textblob>=0.18.0
