@@ -639,33 +639,287 @@ elif menu=="🔍 종목 분석" and analyze_btn:
     </div>""", unsafe_allow_html=True)
     st.markdown("---")
 
-    # ── 최근 가격 흐름 표 (차트 대신) ──
-    st.markdown("#### 📅 최근 20일 가격 흐름")
-    df_price = res["df"].tail(20).copy()[["Date","Open","High","Low","Close","Volume"]].reset_index(drop=True)
-    df_price["Date"] = df_price["Date"].astype(str).str[:10]
-    df_price["등락"] = df_price["Close"].pct_change().mul(100).map(
-        lambda x: f"{x:+.2f}%" if pd.notna(x) else "-")
-    df_price["신호"] = df_price.apply(lambda r:
-        "🟢 양봉" if r["Close"] > r["Open"] else "🔴 음봉", axis=1)
-    df_price["Close"] = df_price["Close"].map("${:.2f}".format)
-    df_price["High"]  = df_price["High"].map("${:.2f}".format)
-    df_price["Low"]   = df_price["Low"].map("${:.2f}".format)
-    df_price["Volume"] = df_price["Volume"].map(lambda x: f"{x/1e6:.1f}M")
-    df_price = df_price.rename(columns={
-        "Date":"날짜","Open":"시가","High":"고가","Low":"저가",
-        "Close":"종가","Volume":"거래량"
-    })[["날짜","종가","등락","신호","고가","저가","거래량"]]
-    st.dataframe(df_price.iloc[::-1].reset_index(drop=True),
-                 use_container_width=True, hide_index=True,
-        column_config={
-            "날짜":   st.column_config.TextColumn(width="small"),
-            "종가":   st.column_config.TextColumn(width="small"),
-            "등락":   st.column_config.TextColumn(width="small"),
-            "신호":   st.column_config.TextColumn(width="small"),
-            "고가":   st.column_config.TextColumn(width="small"),
-            "저가":   st.column_config.TextColumn(width="small"),
-            "거래량": st.column_config.TextColumn(width="small"),
+    # ── 최근 20일 가격 흐름 + 매매 플랜 근접도 ──
+    st.markdown("#### 📅 최근 20일 가격 흐름 — 매매 플랜 근접도 포함")
+
+    df_price = res["df"].tail(20).copy()[
+        ["Date","Open","High","Low","Close","Volume"]
+    ].reset_index(drop=True)
+
+    # 피보나치 레벨 (매매 플랜)
+    b1 = res["fib_lv"][0]  # BUY1
+    b2 = res["fib_lv"][1]  # BUY2
+    b3 = res["fib_lv"][2]  # BUY3
+    st_p = res["stop_s"]   # 손절
+    tp_p = res["tp_s"]     # 익절
+
+    def plan_status(close_val):
+        """현재 종가가 매매 플랜 중 어느 구간에 있는지 판별"""
+        c = float(close_val)
+        # 손절 아래
+        if st_p and c < st_p:
+            return "🔴 손절선 이탈"
+        # 익절 도달
+        if tp_p and c >= tp_p:
+            return "🏆 익절 목표 도달"
+        # BUY3 구간 (±2%)
+        if b3 and abs(c - b3) / b3 <= 0.02:
+            return "🟠 BUY3 진입 근접"
+        # BUY3 아래
+        if b3 and c < b3:
+            return "🟠 BUY3 구간 이탈"
+        # BUY2 구간 (±2%)
+        if b2 and abs(c - b2) / b2 <= 0.02:
+            return "🟡 BUY2 진입 근접"
+        # BUY1 구간 (±2%)
+        if b1 and abs(c - b1) / b1 <= 0.02:
+            return "🟢 BUY1 진입 근접"
+        # BUY1 위 (대기)
+        if b1 and c > b1:
+            dist = (c - b1) / b1 * 100
+            return f"⏳ BUY1까지 -{dist:.1f}%"
+        return "—"
+
+    def dist_to_buy1(close_val):
+        """BUY1까지 거리 (%)"""
+        if not b1: return "—"
+        c = float(close_val)
+        d = (c - b1) / b1 * 100
+        if d > 0:
+            return f"-{d:.1f}% 남음"
+        elif abs(d) <= 2:
+            return "✅ 도달"
+        else:
+            return f"+{abs(d):.1f}% 초과"
+
+    price_rows = []
+    prev_close = None
+    for _, row in df_price.iterrows():
+        c = float(row["Close"])
+        o = float(row["Open"])
+        h = float(row["High"])
+        l = float(row["Low"])
+        # 등락
+        chg = (c / prev_close - 1) * 100 if prev_close else 0
+        chg_str = f"{chg:+.2f}%" if prev_close else "-"
+        prev_close = c
+        price_rows.append({
+            "날짜":        str(row["Date"])[:10],
+            "종가":        f"${c:.2f}",
+            "등락":        chg_str,
+            "캔들":        "🟢" if c >= o else "🔴",
+            "고가":        f"${h:.2f}",
+            "저가":        f"${l:.2f}",
+            "매매플랜 위치": plan_status(c),
+            "BUY1까지":    dist_to_buy1(c),
         })
+
+    df_p = pd.DataFrame(price_rows).iloc[::-1].reset_index(drop=True)
+    st.dataframe(df_p, use_container_width=True, hide_index=True,
+        column_config={
+            "날짜":         st.column_config.TextColumn("날짜",       width="small"),
+            "종가":         st.column_config.TextColumn("종가",       width="small"),
+            "등락":         st.column_config.TextColumn("등락",       width="small"),
+            "캔들":         st.column_config.TextColumn("캔들",       width="small"),
+            "고가":         st.column_config.TextColumn("고가",       width="small"),
+            "저가":         st.column_config.TextColumn("저가",       width="small"),
+            "매매플랜 위치": st.column_config.TextColumn("매매플랜 위치", width="medium"),
+            "BUY1까지":     st.column_config.TextColumn("BUY1까지",   width="small"),
+        })
+
+    # 범례
+    st.markdown("""
+    <div style="background:#111827;border:1px solid #1e2d4a;border-radius:8px;
+                padding:12px 16px;margin-top:8px;font-size:.78rem;color:#9ca3af;line-height:1.9">
+      <b style="color:#e8eaf6">매매플랜 위치 범례</b><br>
+      🏆 익절 목표 도달 &nbsp;|&nbsp;
+      ⏳ BUY1까지 -X% 남음 &nbsp;|&nbsp;
+      🟢 BUY1 근접(±2%) &nbsp;|&nbsp;
+      🟡 BUY2 근접(±2%) &nbsp;|&nbsp;
+      🟠 BUY3 근접(±2%) &nbsp;|&nbsp;
+      🔴 손절선 이탈
+    </div>""", unsafe_allow_html=True)
+    st.markdown("---")
+
+    # ════════════════════════════════════════════════════════════
+    # 📰 뉴스 감성 분석
+    # ════════════════════════════════════════════════════════════
+    st.markdown("#### 📰 실시간 뉴스 감성 분석")
+
+    def get_news_sentiment(ticker):
+        try:
+            tk_obj = yf.Ticker(ticker)
+            news   = tk_obj.news or []
+            if not news:
+                return 0.0, []
+            headlines = [n.get("title","") for n in news[:15]]
+
+            # VADER → TextBlob → 키워드 순 fallback
+            try:
+                from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+                sia    = SentimentIntensityAnalyzer()
+                scores = [sia.polarity_scores(h)["compound"] for h in headlines]
+            except ImportError:
+                try:
+                    from textblob import TextBlob
+                    scores = [TextBlob(h).sentiment.polarity for h in headlines]
+                except ImportError:
+                    pos_kw = ["beat","surge","jump","strong","record","growth",
+                              "bull","gain","profit","upgrade","buy","rally","up"]
+                    neg_kw = ["miss","fall","drop","weak","loss","bear","down",
+                              "cut","warn","risk","downgrade","sell","crash"]
+                    scores = []
+                    for h in headlines:
+                        hl = h.lower()
+                        s  = sum(1 for w in pos_kw if w in hl) \
+                           - sum(1 for w in neg_kw if w in hl)
+                        scores.append(max(-1.0, min(1.0, s / 3.0)))
+
+            avg = float(np.mean(scores)) if scores else 0.0
+            return avg, list(zip(headlines, scores))
+        except Exception:
+            return 0.0, []
+
+    with st.spinner("뉴스 가져오는 중..."):
+        sentiment, news_list = get_news_sentiment(ticker_input)
+
+    if news_list:
+        # 감성 요약 카드
+        sent_color = "#00ff9d" if sentiment > 0.1 else \
+                     "#ff4757" if sentiment < -0.1 else "#ffd700"
+        sent_label = "긍정적 📈" if sentiment > 0.1 else \
+                     "부정적 📉" if sentiment < -0.1 else "중립 ➡️"
+        st.markdown(f"""
+        <div style="background:#111827;border:1px solid #1e2d4a;border-radius:10px;
+                    padding:14px;text-align:center;margin-bottom:12px">
+          <div style="color:#6b7280;font-size:.78rem">평균 뉴스 감성</div>
+          <div style="font-size:1.6rem;font-weight:700;color:{sent_color};margin:4px 0">
+            {sentiment:+.3f}
+          </div>
+          <div style="color:{sent_color};font-size:.85rem">{sent_label}</div>
+        </div>""", unsafe_allow_html=True)
+
+        # 뉴스 헤드라인 표
+        news_rows = []
+        for headline, score in news_list:
+            sc = float(score)
+            news_rows.append({
+                "감성":     "📈 긍정" if sc > 0.1 else "📉 부정" if sc < -0.1 else "➡️ 중립",
+                "점수":     f"{sc:+.3f}",
+                "헤드라인": headline,
+            })
+        df_news = pd.DataFrame(news_rows)
+        st.dataframe(df_news, use_container_width=True, hide_index=True,
+            column_config={
+                "감성":     st.column_config.TextColumn("감성",     width="small"),
+                "점수":     st.column_config.TextColumn("점수",     width="small"),
+                "헤드라인": st.column_config.TextColumn("헤드라인", width="large"),
+            })
+    else:
+        st.info("뉴스 데이터를 가져올 수 없습니다.")
+    st.markdown("---")
+
+    # ════════════════════════════════════════════════════════════
+    # 📊 어닝(실적) 분석
+    # ════════════════════════════════════════════════════════════
+    st.markdown("#### 📊 실적(어닝) 분석")
+
+    def get_earnings_info(ticker):
+        try:
+            tk_obj = yf.Ticker(ticker)
+            # 다음 실적 발표일
+            cal = tk_obj.calendar
+            next_earn = None
+            days_left  = None
+            if cal is not None and not (isinstance(cal, dict) and not cal):
+                if isinstance(cal, pd.DataFrame) and "Earnings Date" in cal.index:
+                    earn_dates = cal.loc["Earnings Date"]
+                    next_earn  = pd.to_datetime(earn_dates.iloc[0])
+                    days_left  = (next_earn - pd.Timestamp.now()).days
+                elif isinstance(cal, dict) and "Earnings Date" in cal:
+                    ed = cal["Earnings Date"]
+                    if isinstance(ed, list) and ed:
+                        next_earn = pd.to_datetime(ed[0])
+                        days_left = (next_earn - pd.Timestamp.now()).days
+
+            # 과거 실적 (EPS)
+            hist = tk_obj.earnings_history if hasattr(tk_obj, "earnings_history") else None
+            if hist is None or (hasattr(hist, "empty") and hist.empty):
+                hist = None
+
+            # 기본 재무 정보
+            info = tk_obj.info or {}
+            pe   = info.get("trailingPE", None)
+            fpe  = info.get("forwardPE",  None)
+            eps  = info.get("trailingEps", None)
+            rev  = info.get("revenueGrowth", None)
+            earn_growth = info.get("earningsGrowth", None)
+
+            return {
+                "next_earn":    next_earn,
+                "days_left":    days_left,
+                "pe":           pe,
+                "fpe":          fpe,
+                "eps":          eps,
+                "rev_growth":   rev,
+                "earn_growth":  earn_growth,
+                "hist":         hist,
+            }
+        except Exception:
+            return {}
+
+    with st.spinner("실적 데이터 가져오는 중..."):
+        earn = get_earnings_info(ticker_input)
+
+    # 다음 실적 발표일
+    if earn.get("next_earn") and earn.get("days_left") is not None:
+        dl   = earn["days_left"]
+        ed   = str(earn["next_earn"])[:10]
+        ec   = "#ff4757" if dl <= 7 else "#ffd700" if dl <= 21 else "#00ff9d"
+        warn = "⚠️ 1주 이내 — 포지션 축소 권장" if dl <= 7 else \
+               "⚠️ 3주 이내 — 변동성 주의"     if dl <= 21 else \
+               "✅ 여유 있음"
+        st.markdown(f"""
+        <div style="background:#111827;border:1px solid {ec};border-radius:10px;
+                    padding:14px;margin-bottom:12px">
+          <div style="color:#6b7280;font-size:.78rem">다음 실적 발표일</div>
+          <div style="font-size:1.3rem;font-weight:700;color:{ec};margin:4px 0">
+            {ed} &nbsp; (D-{dl})
+          </div>
+          <div style="color:{ec};font-size:.82rem">{warn}</div>
+        </div>""", unsafe_allow_html=True)
+    else:
+        st.info("실적 발표일 정보를 가져올 수 없습니다.")
+
+    # 재무 지표 표
+    fin_rows = []
+    if earn.get("pe"):
+        fin_rows.append({"지표":"PER (주가수익비율)","값":f"{earn['pe']:.1f}x",
+            "해석":"✅ 저평가" if earn["pe"]<15 else "⚠️ 고평가" if earn["pe"]>30 else "➡️ 보통"})
+    if earn.get("fpe"):
+        fin_rows.append({"지표":"Forward PER (예상)","값":f"{earn['fpe']:.1f}x",
+            "해석":"✅ 저평가" if earn["fpe"]<15 else "⚠️ 고평가" if earn["fpe"]>30 else "➡️ 보통"})
+    if earn.get("eps"):
+        fin_rows.append({"지표":"EPS (주당순이익)","값":f"${earn['eps']:.2f}",
+            "해석":"✅ 흑자" if earn["eps"]>0 else "❌ 적자"})
+    if earn.get("rev_growth") is not None:
+        rv = earn["rev_growth"] * 100
+        fin_rows.append({"지표":"매출 성장률 (YoY)","값":f"{rv:+.1f}%",
+            "해석":"✅ 고성장" if rv>20 else "✅ 성장" if rv>0 else "❌ 역성장"})
+    if earn.get("earn_growth") is not None:
+        eg = earn["earn_growth"] * 100
+        fin_rows.append({"지표":"이익 성장률 (YoY)","값":f"{eg:+.1f}%",
+            "해석":"✅ 고성장" if eg>20 else "✅ 성장" if eg>0 else "❌ 역성장"})
+
+    if fin_rows:
+        st.dataframe(pd.DataFrame(fin_rows), use_container_width=True, hide_index=True,
+            column_config={
+                "지표": st.column_config.TextColumn("재무 지표", width="medium"),
+                "값":   st.column_config.TextColumn("수치",     width="small"),
+                "해석": st.column_config.TextColumn("해석",     width="medium"),
+            })
+    else:
+        st.info("재무 데이터를 가져올 수 없습니다.")
 
 # ════════════════════════════════════════════════════════════
 # 🤖 AI 종목 추천
