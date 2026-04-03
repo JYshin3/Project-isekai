@@ -547,7 +547,7 @@ def scan_ticker(ticker, period):
 # 차트 함수
 # ════════════════════════════════════════════════════════════
 def draw_price_chart(df, trades, ticker, fib_lv=None, stop_s=None, tp_s=None):
-    df_c=df.tail(200).copy()
+    df_c=df.tail(200).copy().reset_index(drop=True)  # ✅ 인덱스 초기화
     fig=make_subplots(rows=3,cols=1,shared_xaxes=True,row_heights=[0.56,0.22,0.22],
         vertical_spacing=0.03,
         subplot_titles=[f"{ticker} — 가격·피보나치·BUY/SELL 타이밍","StochRSI","ADX"])
