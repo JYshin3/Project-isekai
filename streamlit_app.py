@@ -1493,14 +1493,133 @@ if menu=="🏠 홈 대시보드":
 # 🔍 종목 분석
 # ════════════════════════════════════════════════════════════
 elif menu=="🔍 종목 분석" and analyze_btn:
-    # ✅ 분석 버튼 클릭 시 항상 최신 데이터로 새로 분석
-    with st.spinner(f"📡 {ticker_input} 최신 데이터 받는 중..."):
+    # ✅ 항상 2y 데이터로 받아서 멀티 기간 분석
+    with st.spinner(f"📡 {ticker_input} 데이터 수집 중..."):
         analyze.clear()
-        res=analyze(ticker_input,period_input)
+        res = analyze(ticker_input, "2y")  # 항상 2y — 멀티 기간 분석용
     if res is None:
         st.error("데이터를 가져올 수 없습니다. 티커를 확인하세요."); st.stop()
 
     st.markdown(f"### 🔍 {ticker_input} 분석 결과")
+
+    # ════════════════════════════════════════════════════════
+    # 멀티 기간 레짐 분석 (핵심 추가 기능)
+    # 단기/중기/장기 레짐을 동시에 보여줌
+    # ════════════════════════════════════════════════════════
+    df_full = res["df"]
+
+    def get_period_regime(df, window):
+        """최근 N봉 기준으로 레짐 계산"""
+        if len(df) < window + 50:
+            return "UNKNOWN", 0, 0
+        sub = df.tail(window + 50).copy().reset_index(drop=True)
+        # 해당 구간의 마지막 봉 레짐
+        valid = sub.dropna(subset=["Regime","MA200","ADX","ROC"])
+        if valid.empty:
+            return "UNKNOWN", 0, 0
+        row  = valid.iloc[-1]
+        ret  = float((sub["Close"].iloc[-1] / sub["Close"].iloc[0] - 1) * 100)
+        vol  = float(sub["Return"].std() * (252**0.5) * 100) if "Return" in sub else 0
+        return row["Regime"], round(ret, 1), round(vol, 1)
+
+    r_short, ret_short, vol_short = get_period_regime(df_full, 20)   # 1개월
+    r_mid,   ret_mid,   vol_mid   = get_period_regime(df_full, 60)   # 3개월
+    r_long,  ret_long,  vol_long  = get_period_regime(df_full, 200)  # 1년
+
+    # 레짐 색상/아이콘
+    def regime_style(r):
+        return {
+            "UPtrend":   ("#00ff9d", "📈 상승"),
+            "RANGE":     ("#ffd700", "➡️ 박스"),
+            "DOWNtrend": ("#ff4757", "📉 하락"),
+            "UNKNOWN":   ("#6b7280", "❓ 불명"),
+        }.get(r, ("#6b7280", "❓"))
+
+    sc, sl = regime_style(r_short)
+    mc, ml = regime_style(r_mid)
+    lc, ll = regime_style(r_long)
+
+    # 종합 판단 로직
+    regimes = [r_short, r_mid, r_long]
+    up_cnt  = regimes.count("UPtrend")
+    dn_cnt  = regimes.count("DOWNtrend")
+    rg_cnt  = regimes.count("RANGE")
+
+    if up_cnt == 3:
+        overall = ("🚀 강한 상승 추세", "#00ff9d",
+                   "단/중/장기 모두 상승 — 모멘텀V6 + 트레일링 최적")
+    elif up_cnt == 2 and dn_cnt == 0:
+        overall = ("📈 상승 추세 (일부 조정)", "#4ade80",
+                   "중/장기 상승 중 단기 조정 — 피보나치 매수 기회!")
+    elif up_cnt == 1 and r_long == "UPtrend":
+        overall = ("🟡 장기 상승 + 중기 조정", "#ffd700",
+                   "장기 추세는 살아있음 — BUY1 구간 대기")
+    elif dn_cnt == 3:
+        overall = ("🔴 강한 하락 추세", "#ff4757",
+                   "단/중/장기 모두 하락 — 매수 금지, 인버스 ETF 검토")
+    elif dn_cnt == 2:
+        overall = ("📉 하락 추세 우세", "#ff6b6b",
+                   "하락 추세 — 반등 확인 후 소량 진입 또는 관망")
+    elif r_short == "DOWNtrend" and r_long == "UPtrend":
+        overall = ("⚡ 장기 상승 중 단기 하락", "#ff8c00",
+                   "눌림목 구간 가능성 — 피보나치 BUY 구간 확인")
+    elif rg_cnt >= 2:
+        overall = ("➡️ 박스권", "#ffd700",
+                   "방향성 없는 구간 — 피보나치 분할매수 V5 최적")
+    else:
+        overall = ("🤔 혼조세", "#9ca3af",
+                   "추세 불명확 — 신중한 접근 필요")
+
+    ov_txt, ov_color, ov_desc = overall
+
+    st.markdown(f"""
+    <div style="background:#0f172a;border:2px solid {ov_color};
+                border-radius:14px;padding:16px;margin-bottom:16px">
+      <div style="color:{ov_color};font-weight:700;font-size:1.05rem;margin-bottom:4px">
+        {ov_txt}
+      </div>
+      <div style="color:#9ca3af;font-size:.8rem;margin-bottom:14px">{ov_desc}</div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+
+        <div style="background:#111827;border:1px solid {sc}44;
+                    border-radius:10px;padding:12px;text-align:center">
+          <div style="color:#6b7280;font-size:.7rem;margin-bottom:4px">단기 (1개월)</div>
+          <div style="color:{sc};font-weight:700;font-size:1rem">{sl}</div>
+          <div style="color:{'#00ff9d' if ret_short>0 else '#ff4757'};
+                      font-size:.8rem;margin-top:4px">{ret_short:+.1f}%</div>
+          <div style="color:#6b7280;font-size:.68rem">변동성 {vol_short:.0f}%</div>
+        </div>
+
+        <div style="background:#111827;border:1px solid {mc}44;
+                    border-radius:10px;padding:12px;text-align:center">
+          <div style="color:#6b7280;font-size:.7rem;margin-bottom:4px">중기 (3개월)</div>
+          <div style="color:{mc};font-weight:700;font-size:1rem">{ml}</div>
+          <div style="color:{'#00ff9d' if ret_mid>0 else '#ff4757'};
+                      font-size:.8rem;margin-top:4px">{ret_mid:+.1f}%</div>
+          <div style="color:#6b7280;font-size:.68rem">변동성 {vol_mid:.0f}%</div>
+        </div>
+
+        <div style="background:#111827;border:1px solid {lc}44;
+                    border-radius:10px;padding:12px;text-align:center">
+          <div style="color:#6b7280;font-size:.7rem;margin-bottom:4px">장기 (1년)</div>
+          <div style="color:{lc};font-weight:700;font-size:1rem">{ll}</div>
+          <div style="color:{'#00ff9d' if ret_long>0 else '#ff4757'};
+                      font-size:.8rem;margin-top:4px">{ret_long:+.1f}%</div>
+          <div style="color:#6b7280;font-size:.68rem">변동성 {vol_long:.0f}%</div>
+        </div>
+
+      </div>
+
+      <div style="margin-top:12px;padding-top:10px;border-top:1px solid #1e2d4a;
+                  font-size:.76rem;color:#6b7280;line-height:1.8">
+        💡 <b style="color:#ffd700">전략 가이드:</b><br>
+        단기↑ + 중기↑ → 모멘텀V6 + 트레일링 &nbsp;|&nbsp;
+        단기↓ + 장기↑ → 피보나치 눌림목 매수 &nbsp;|&nbsp;
+        전부↓ → 인버스 ETF or 현금 보유
+      </div>
+    </div>""", unsafe_allow_html=True)
+    st.markdown("---")
 
     # ── 종목 유형 자동 감지 + 권장 전략 배너 ──
     ticker_type_a = classify_ticker_type(ticker_input, res["df"])
