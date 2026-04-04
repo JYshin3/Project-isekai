@@ -229,6 +229,7 @@ def build_features(df):
         (df["MonthBias"]>1.0).astype(int)+(df["DOWbias"]>1.0).astype(int)+
         df["SantaRally"].astype(int)+((df["Month"]<=4)|(df["Month"]>=11)).astype(int))
     vm=df["Volume"].rolling(20).mean()
+    df["VolMA20"]=vm  # 모멘텀 스캔에서 사용
     df["HVI"]=(df["Volume"]/(vm+1e-9)>1.5).astype(int)
     cr=df["High"]-df["Low"]+1e-9
     lw=df[["Close","Open"]].min(axis=1)-df["Low"]; uw=df["High"]-df[["Close","Open"]].max(axis=1)
@@ -305,8 +306,8 @@ def build_features(df):
 @st.cache_data(ttl=600)
 def scan_single(ticker):
     """
-    자동 스캔용 경량 분석 함수
-    피보나치 구간 진입 여부 + 핵심 지표만 빠르게 계산
+    자동 스캔 — 피보나치 + 모멘텀 이중 전략
+    피보나치 불가 종목도 모멘텀 신호가 있으면 추천
     """
     try:
         df = yf.download(ticker, period="2y", interval="1d",
@@ -325,92 +326,126 @@ def scan_single(ticker):
 
         price  = float(row["Close"])
         regime = row["Regime"]
-        if regime == "UNKNOWN": return None  # 데이터 부족 종목 제외
+        if regime in ["UNKNOWN", "DOWNtrend"]: return None
 
         cfg = REGIME_PARAMS[regime]
         pct = float(row["ScorePct"])
 
-        # 피보나치 계산
-        sh30  = float(row["sw_high"]) if not pd.isna(row["sw_high"]) else None
-        sl30  = float(row["sw_low"])  if not pd.isna(row["sw_low"])  else None
-        rng30 = float(row["rng"])     if not pd.isna(row["rng"])     else None
-        fib_valid = bool(row.get("fib_valid", False))
+        # ── 종목 유형 판단 ──────────────────────────────
+        ticker_type = classify_ticker_type(ticker, df)
 
-        # 스윙 선택
-        if fib_valid and sh30 and rng30 > 0:
+        # ── 모멘텀 신호 (항상 계산) ─────────────────────
+        ma20   = float(row.get("MA20", 0))
+        ma60_v = float(row.get("MA60", 1))
+        rsi    = float(row.get("RSI", 50))
+        macd_h_raw = row.get("MACD_hist", float("nan"))
+        macd_h = float(macd_h_raw) if not pd.isna(macd_h_raw) else 0
+        vol    = float(row.get("Volume", 0))
+        vol_ma = float(row.get("VolMA20", 1))
+        mom_c1 = ma20 > ma60_v
+        mom_c2 = 45 <= rsi <= 68
+        mom_c3 = macd_h > 0
+        mom_c4 = vol_ma > 0 and (vol / vol_ma) >= 1.3
+        momentum_score = int(mom_c1)+int(mom_c2)+int(mom_c3)+int(mom_c4)
+        has_momentum   = momentum_score >= 3
+
+        # ── 피보나치 계산 (실패해도 계속 진행) ──────────
+        fib_lv = [None, None, None]
+        valid_fibs = []
+        dist_pct = -99
+        fib_score = 0
+        nearest_fib = None
+
+        sh30  = float(row["sw_high"]) if not pd.isna(row["sw_high"]) else None
+        rng30 = float(row["rng"])     if not pd.isna(row["rng"])     else None
+        fib_valid_flag = bool(row.get("fib_valid", False))
+
+        if fib_valid_flag and sh30 and rng30 and rng30 > 0:
             use_sh, use_rng = sh30, rng30
         else:
-            sh60  = float(df["High"].rolling(60).max().iloc[-1])
-            rng60 = sh60 - float(df["Low"].rolling(60).min().iloc[-1])
-            if rng60 > 0 and sh60 > price:
-                use_sh, use_rng = sh60, rng60
-            else:
-                # 120일 시도
-                sh120  = float(df["High"].rolling(120).max().iloc[-1])
-                rng120 = sh120 - float(df["Low"].rolling(120).min().iloc[-1])
-                if rng120 > 0 and sh120 > price:
-                    use_sh, use_rng = sh120, rng120
+            try:
+                sh60  = float(df["High"].rolling(60).max().iloc[-1])
+                rng60 = sh60 - float(df["Low"].rolling(60).min().iloc[-1])
+                if rng60 > 0 and sh60 > price:
+                    use_sh, use_rng = sh60, rng60
                 else:
-                    return None  # 모든 스윙에서 계산 불가 → 스캔 제외
+                    sh120  = float(df["High"].rolling(120).max().iloc[-1])
+                    rng120 = sh120 - float(df["Low"].rolling(120).min().iloc[-1])
+                    if rng120 > 0 and sh120 > price:
+                        use_sh, use_rng = sh120, rng120
+                    else:
+                        use_sh, use_rng = None, None
+            except Exception:
+                use_sh, use_rng = None, None
 
-        fib_lv_raw = [use_sh - use_rng*f for f in cfg["fib"]]
-        fib_lv     = [f if f < price else None for f in fib_lv_raw]
+        if use_sh and use_rng:
+            fib_lv_raw = [use_sh - use_rng*f for f in cfg["fib"]]
+            fib_lv     = [f if f < price else None for f in fib_lv_raw]
+            valid_fibs = [f for f in fib_lv if f is not None]
+            if valid_fibs:
+                nearest_fib = max(valid_fibs)
+                dist_pct    = (nearest_fib / price - 1) * 100
+                fib_score   = max(0, min(100, 100 + dist_pct * 5))
 
-        # 핵심 필터: 피보나치 구간에 근접한 종목만
-        # 유효한 레벨이 하나도 없으면 제외
-        valid_fibs = [f for f in fib_lv if f is not None]
-        if not valid_fibs: return None
+        # ── 신호 결정 ────────────────────────────────────
+        if valid_fibs and abs(dist_pct) <= 5 and pct >= 50:
+            signal       = "🟢 피보 매수 근접"
+            strategy_rec = "피보나치V5"
+        elif valid_fibs and dist_pct > -15 and pct >= 40:
+            signal       = "🟡 피보 대기"
+            strategy_rec = "피보나치V5"
+        elif has_momentum and ticker_type == "고변동성":
+            signal       = "🚀 모멘텀 진입"
+            strategy_rec = "모멘텀V6"
+        elif has_momentum:
+            signal       = "📈 모멘텀 감지"
+            strategy_rec = "모멘텀V6"
+        elif valid_fibs:
+            signal       = "⏳ 피보 원거리"
+            strategy_rec = "피보나치V5"
+        else:
+            return None  # 둘 다 없으면 추천 제외
 
-        # 가장 가까운 피보나치 레벨까지 거리
-        nearest_fib = max(valid_fibs)  # 현재가와 가장 가까운 BUY 레벨
-        dist_pct    = (nearest_fib / price - 1) * 100  # 음수 = 아직 도달 안 함
-
-        # 피보나치 근접도 점수 (가까울수록 높음)
-        # dist_pct: -20% ~ 0%  →  fib_score: 0 ~ 100
-        fib_score = max(0, min(100, 100 + dist_pct * 5))
-
-        # 불타기/물타기 판단
+        # ── 불타기 판단 ──────────────────────────────────
         bull_score = int(row.get("BullAdd_score", 0))
         is_bull    = bull_score >= 2
 
-        # 매수 여부 판단
-        near = abs(dist_pct) <= 5  # ±5% 이내 = 근접
-        if regime == "DOWNtrend":
-            signal = "❌ 하락장"
-        elif near and pct >= 50:
-            signal = "🟢 매수 근접"
-        elif dist_pct > -10 and pct >= 45:
-            signal = "🟡 대기 중"
-        else:
-            signal = "⏳ 원거리"
-
-        # 평균단가 시나리오
-        avg_s  = sum(fib_lv[i]*[0.30,0.35,0.35][i]
-                     for i in range(3) if fib_lv[i]) /                  sum([0.30,0.35,0.35][i]
-                     for i in range(3) if fib_lv[i])                   if valid_fibs else None
+        # ── 매매 플랜 ────────────────────────────────────
+        avg_s  = (
+            sum(fib_lv[i]*[0.30,0.35,0.35][i] for i in range(3) if fib_lv[i])
+            / sum([0.30,0.35,0.35][i] for i in range(3) if fib_lv[i])
+        ) if valid_fibs else None
         stop_s = avg_s * (1 - cfg["stop"]) if avg_s else None
         tp_s   = avg_s * (1 + cfg["tp"])   if avg_s else None
 
-        # 1주/1개월 수익률
         ret_1w = float((df["Close"].iloc[-1]/df["Close"].iloc[-6]-1)*100)  if len(df)>=6  else 0
         ret_1m = float((df["Close"].iloc[-1]/df["Close"].iloc[-22]-1)*100) if len(df)>=22 else 0
 
+        if strategy_rec.startswith("모멘텀"):
+            total_rec_score = pct*0.4 + momentum_score/4*100*0.4 + bull_score/3*20*0.2
+        else:
+            total_rec_score = pct*0.5 + fib_score*0.3 + bull_score/3*20*0.2
+
         return {
-            "ticker":   ticker,
-            "price":    price,
-            "regime":   regime,
-            "regime_desc": cfg["desc"],
-            "pct":      pct,
-            "signal":   signal,
-            "fib_lv":   fib_lv,
-            "nearest_fib": nearest_fib,
-            "dist_pct": dist_pct,
-            "fib_score": fib_score,
-            "avg_s":    avg_s,
-            "stop_s":   stop_s,
-            "tp_s":     tp_s,
-            "bull_score": bull_score,
-            "is_bull":  is_bull,
+            "ticker":         ticker,
+            "price":          price,
+            "regime":         regime,
+            "regime_desc":    cfg["desc"],
+            "pct":           pct,
+            "signal":        signal,
+            "strategy_rec":  strategy_rec,
+            "ticker_type":   ticker_type,
+            "fib_lv":        fib_lv,
+            "nearest_fib":   nearest_fib,
+            "dist_pct":      dist_pct,
+            "fib_score":     fib_score,
+            "momentum_score": momentum_score,
+            "has_momentum":  has_momentum,
+            "avg_s":         avg_s,
+            "stop_s":        stop_s,
+            "tp_s":          tp_s,
+            "bull_score":    bull_score,
+            "is_bull":       is_bull,
             "ts":  int(row["TrendScore"]),
             "cs":  int(row["CycleScore"]),
             "ss":  int(row["SeasonalScore"]),
@@ -419,8 +454,7 @@ def scan_single(ticker):
             "adx":   float(row["ADX"]),
             "ret_1w": ret_1w,
             "ret_1m": ret_1m,
-            # 종합 추천 점수: AI점수 50% + 피보근접도 30% + 불타기보너스 20%
-            "total_rec_score": pct*0.5 + fib_score*0.3 + bull_score/3*20*0.2,
+            "total_rec_score": total_rec_score,
         }
     except Exception:
         return None
@@ -2134,8 +2168,15 @@ elif menu=="🤖 AI 종목 추천" and scan_btn:
     prog_bar.empty(); status_txt.empty()
 
     # ── 필터링 & 정렬 ──
-    # 1차: 하락장 제외
-    scan_results = [r for r in scan_results if r["regime"] != "DOWNtrend"]
+    # 1차: None 제거 + 하락장 제외 + 필수 키 확인
+    scan_results = [
+        r for r in scan_results
+        if r is not None
+        and isinstance(r, dict)
+        and "signal" in r
+        and "regime" in r
+        and r["regime"] != "DOWNtrend"
+    ]
     # 2차: 추천 점수 기준 정렬
     scan_results = sorted(scan_results,
                           key=lambda x: x["total_rec_score"], reverse=True)
@@ -2172,12 +2213,11 @@ elif menu=="🤖 AI 종목 추천" and scan_btn:
         dist_str= f"{r['dist_pct']:+.1f}%" if r["dist_pct"] else "-"
         # 불타기 표시
         bull_str = f"📈 {r['bull_score']}/3" if r["is_bull"] else f"📉 {r['bull_score']}/3"
-        t_type_r = classify_ticker_type(r["ticker"])
         rank_rows.append({
             "순위":      i+1,
             "종목":      r["ticker"],
-            "유형":      "🔥 고변동" if t_type_r=="고변동성" else "🧊 저변동",
-            "권장전략":  "모멘텀V6" if t_type_r=="고변동성" else "피보V5",
+            "유형":      "🔥 고변동" if r.get("ticker_type")=="고변동성" else "🧊 저변동",
+            "권장전략":  r.get("strategy_rec","피보V5"),
             "현재가":    f"${r['price']:.2f}",
             "장세":      r["regime_desc"],
             "신호":      r["signal"],
@@ -2274,17 +2314,21 @@ elif menu=="🤖 AI 종목 추천" and scan_btn:
     with st.expander(f"📊 전체 스캔 결과 ({len(scan_results)}개) 보기"):
         all_rows = []
         for r in scan_results:
-            b1 = r["fib_lv"][0]
+            if not r or "ticker" not in r: continue
+            b1 = r.get("fib_lv", [None])[0]
+            t_type_all = classify_ticker_type(r["ticker"])
             all_rows.append({
                 "종목":      r["ticker"],
+                "유형":      "🔥 고변동" if t_type_all=="고변동성" else "🧊 저변동",
+                "권장전략":  "모멘텀V6"  if t_type_all=="고변동성" else "피보V5",
                 "현재가":    f"${r['price']:.2f}",
-                "장세":      r["regime_desc"],
-                "신호":      r["signal"],
+                "장세":      r.get("regime_desc",""),
+                "신호":      r.get("signal",""),
                 "BUY1":      f"${b1:.2f}" if b1 else "대기",
-                "BUY1까지":  f"{r['dist_pct']:+.1f}%",
-                "AI 점수":   f"{r['pct']:.0f}%",
-                "추천 점수": f"{r['total_rec_score']:.0f}점",
-                "1주":       f"{r['ret_1w']:+.1f}%",
+                "BUY1까지":  f"{r.get('dist_pct',0):+.1f}%",
+                "AI 점수":   f"{r.get('pct',0):.0f}%",
+                "추천 점수": f"{r.get('total_rec_score',0):.0f}점",
+                "1주":       f"{r.get('ret_1w',0):+.1f}%",
             })
         st.dataframe(pd.DataFrame(all_rows),
             use_container_width=True, hide_index=True)
@@ -2324,8 +2368,8 @@ elif menu=="📊 백테스트" and bt_btn:
     ticker_type = classify_ticker_type(ticker_input, res["df"])
     strategy_type = ver_cfg.get("strategy_type","fib")
 
-    # V6 또는 고변동성 종목 + V5 이상 → 모멘텀 전략 자동 권장
-    auto_momentum = (strategy_type=="momentum") or                     (ticker_type=="고변동성" and bt_version not in ["V1 — 기본 피보나치","V2 — 레짐 필터 추가"])
+    # V6 선택 시에만 모멘텀 전략 → 나머지는 항상 피보나치
+    auto_momentum = (strategy_type == "momentum")
 
     with st.spinner(f"🧪 {ticker_input} [{bt_version}] 백테스트 계산 중..."):
         if auto_momentum and strategy_type=="momentum":
