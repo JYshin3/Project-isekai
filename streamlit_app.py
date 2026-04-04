@@ -212,8 +212,9 @@ def build_features(df):
         highv   = a > atr_med
 
         # ✅ 강화된 DOWNtrend 조건
-        # 52주 고점 대비 -30% 이상 하락이면 무조건 DOWNtrend
-        if draw < -30:
+        # 52주 고점 대비 -45% 이상 하락이면 무조건 DOWNtrend
+        # (-30%는 너무 엄격해서 정상 조정 종목까지 제외됨)
+        if draw < -45:
             return "DOWNtrend"
         # MA200 자체가 하락 중이면 DOWNtrend
         if (not above) and r < 0 and trend and highv:
@@ -356,7 +357,9 @@ def scan_single(ticker):
 
         price  = float(row["Close"])
         regime = row["Regime"]
-        if regime in ["UNKNOWN", "DOWNtrend"]: return None
+        if regime == "UNKNOWN": return None
+        # DOWNtrend는 제외 안 하고 신호에서 표시
+        # (피보나치/모멘텀 모두 불가하면 나중에 return None)
 
         cfg = REGIME_PARAMS[regime]
         pct = float(row["ScorePct"])
@@ -418,7 +421,14 @@ def scan_single(ticker):
                 fib_score   = max(0, min(100, 100 + dist_pct * 5))
 
         # ── 신호 결정 ────────────────────────────────────
-        if valid_fibs and abs(dist_pct) <= 5 and pct >= 50:
+        if regime == "DOWNtrend":
+            # 하락장이지만 반등 모멘텀 있으면 참고용으로 표시
+            if has_momentum and momentum_score == 4:
+                signal       = "⚡ 하락장 반등 감지 (고위험)"
+                strategy_rec = "모멘텀V6"
+            else:
+                return None  # 하락장 + 모멘텀 없으면 제외
+        elif valid_fibs and abs(dist_pct) <= 5 and pct >= 50:
             signal       = "🟢 피보 매수 근접"
             strategy_rec = "피보나치V5"
         elif valid_fibs and dist_pct > -15 and pct >= 40:
@@ -2313,7 +2323,8 @@ elif menu=="🤖 AI 종목 추천" and scan_btn:
         and isinstance(r, dict)
         and "signal" in r
         and "regime" in r
-        and r["regime"] != "DOWNtrend"
+        # DOWNtrend는 scan_single에서 이미 필터링됨
+        # 여기서는 None/키 없는 것만 제거
     ]
     # 2차: 추천 점수 기준 정렬
     scan_results = sorted(scan_results,
