@@ -2184,7 +2184,72 @@ elif menu=="📊 백테스트" and bt_btn:
                     "레짐":      st.column_config.TextColumn(width="small"),
                 })
 
-        # ── Excel 다운로드 ──────────────────────────────────
+        # ── 결과 복사 + Excel 다운로드 ──────────────────────
+        st.markdown("---")
+        st.markdown("##### 📋 결과 복사 (Claude에게 붙여넣기용)")
+
+        # Claude에게 붙여넣기 할 수 있는 텍스트 생성
+        m = metrics
+        sells_list = [t for t in trades if t["구분"]=="SELL"]
+        regime_counts = {}
+        for t in trades:
+            if t["구분"] in ["BUY1","BUY2","BUY3"]:
+                regime_counts[t.get("레짐","?")] = regime_counts.get(t.get("레짐","?"),0)+1
+
+        copy_text = f"""=== 프로젝트 이세계 백테스트 결과 ===
+종목: {ticker_input}
+분석일: {datetime.datetime.now().strftime("%Y-%m-%d")}
+기간: {period_input} (실제 2년 데이터 사용)
+레짐: {res["regime"]} ({res["cfg"]["desc"]})
+
+--- 현재 매매 플랜 ---
+현재가:   ${res["price"]:.2f}
+BUY1:     {f"${res['fib_lv'][0]:.2f}" if res["fib_lv"][0] else "대기"}
+BUY2:     {f"${res['fib_lv'][1]:.2f}" if res["fib_lv"][1] else "대기"}
+BUY3:     {f"${res['fib_lv'][2]:.2f}" if res["fib_lv"][2] else "대기"}
+손절선:   {f"${res['stop_s']:.2f}" if res["stop_s"] else "N/A"}
+익절목표: {f"${res['tp_s']:.2f}" if res["tp_s"] else "N/A"}
+
+--- 백테스트 성과 ---
+총 거래:   {m.get("총 완결 거래","N/A")}건
+BUY1 진입: {m.get("BUY1 진입","N/A")}건
+BUY2 추가: {m.get("BUY2 추가","N/A")}건  (물타기:{m.get("BUY2 물타기","N/A")} / 불타기:{m.get("BUY2 불타기","N/A")})
+BUY3 추가: {m.get("BUY3 추가","N/A")}건  (물타기:{m.get("BUY3 물타기","N/A")} / 불타기:{m.get("BUY3 불타기","N/A")})
+익절:      {m.get("익절","N/A")}건
+손절:      {m.get("손절","N/A")}건
+승률:      {m.get("승률","N/A")}
+총수익률:  {m.get("총 수익률","N/A")}
+CAGR:      {m.get("CAGR","N/A")}
+MDD:       {m.get("MDD","N/A")}
+Sharpe:    {m.get("Sharpe","N/A")}
+Calmar:    {m.get("Calmar","N/A")}
+평균익절:  {m.get("평균 익절","N/A")}
+평균손절:  {m.get("평균 손절","N/A")}
+
+--- AI 점수 ---
+TREND:      {res["ts"]}/4
+CYCLE:      {res["cs"]}/4
+SEASON:     {res["ss"]}/4
+IRREG:      {res["irs"]}/4
+TOTAL:      {res["pct"]:.0f}%
+
+--- 현재 파라미터 ---
+레짐:       {res["regime"]}
+Fib구간:    {res["cfg"]["fib"]}
+손절폭:     -{res["cfg"]["stop"]*100:.0f}%
+익절폭:     +{res["cfg"]["tp"]*100:.0f}%
+StochRSI:   {res["cfg"]["stoch"]} 이하
+============================="""
+
+        st.text_area(
+            "아래 내용을 전체 선택(Ctrl+A) 후 복사해서 Claude에게 붙여넣으세요",
+            value=copy_text,
+            height=420,
+            key="copy_area"
+        )
+        st.caption("💡 팁: 텍스트 박스 클릭 → Ctrl+A (전체선택) → Ctrl+C (복사)")
+
+        st.markdown("")
         now_str = datetime.datetime.now().strftime("%Y%m%d_%H%M")
         excel   = make_excel(ticker_input, res, metrics, trades)
         st.download_button("📊 백테스트 결과 Excel 다운로드", data=excel,
