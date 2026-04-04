@@ -1189,16 +1189,24 @@ if menu=="🏠 홈 대시보드":
             "행동":res["action"],
         })
     if table_data:
+        # 종목 유형 + 권장 전략 컬럼 추가
+        for row in table_data:
+            tk = row["종목"]
+            t_type = classify_ticker_type(tk)
+            row["유형"] = "🔥 고변동" if t_type=="고변동성" else "🧊 저변동"
+            row["권장전략"] = "모멘텀V6" if t_type=="고변동성" else "피보V5"
         df_home=pd.DataFrame(table_data)
         st.dataframe(df_home, use_container_width=True, hide_index=True,
             column_config={
                 "종목":st.column_config.TextColumn("종목",width="small"),
                 "현재가":st.column_config.TextColumn("현재가",width="small"),
-                "1주":st.column_config.TextColumn("1주 수익률",width="small"),
-                "1개월":st.column_config.TextColumn("1개월 수익률",width="small"),
+                "유형":st.column_config.TextColumn("유형",width="small"),
+                "권장전략":st.column_config.TextColumn("권장전략",width="small"),
                 "점수":st.column_config.TextColumn("AI 점수",width="small"),
                 "레짐":st.column_config.TextColumn("장세",width="small"),
                 "신호":st.column_config.TextColumn("신호",width="medium"),
+                "1주":st.column_config.TextColumn("1주",width="small"),
+                "1개월":st.column_config.TextColumn("1개월",width="small"),
                 "행동":st.column_config.TextColumn("권장 행동",width="small"),
             })
     st.markdown("---")
@@ -1229,7 +1237,41 @@ elif menu=="🔍 종목 분석" and analyze_btn:
 
     st.markdown(f"### 🔍 {ticker_input} 분석 결과")
 
-    # ── 핵심 정보 한 줄 ──
+    # ── 종목 유형 자동 감지 + 권장 전략 배너 ──
+    ticker_type_a = classify_ticker_type(ticker_input, res["df"])
+    if ticker_type_a == "고변동성":
+        t_color = "#ff8c00"; t_icon = "🔥"
+        t_strategy = "모멘텀 추격 전략 (V6)"
+        t_desc = "피보나치보다 모멘텀 전략이 더 적합합니다. 백테스트에서 V6를 선택하세요."
+        t_rules = "진입: MA20>MA60 + RSI 45~68 + MACD양수 + 거래량급증 (4개 중 3개) | 익절: +10% | 손절: -5%"
+    else:
+        t_color = "#00d4ff"; t_icon = "🧊"
+        t_strategy = "피보나치 분할매수 전략 (V4/V5)"
+        t_desc = "변동성이 낮아 피보나치 눌림목 전략에 적합합니다."
+        t_rules = "진입: 피보나치 BUY1/2/3 분할 | 익절: UP+15% / RANGE+12% | 손절: UP-7% / RANGE-5%"
+
+    st.markdown(f"""
+    <div style="background:#0f172a;border:2px solid {t_color};
+                border-radius:12px;padding:14px 16px;margin-bottom:14px">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+        <span style="font-size:1.4rem">{t_icon}</span>
+        <div>
+          <div style="color:{t_color};font-weight:700;font-size:.95rem">
+            {ticker_input} — {ticker_type_a} 종목
+          </div>
+          <div style="color:#e8eaf6;font-size:.82rem;margin-top:2px">
+            권장 전략: <b>{t_strategy}</b>
+          </div>
+        </div>
+      </div>
+      <div style="background:#111827;border-radius:8px;padding:10px;font-size:.76rem;
+                  color:#9ca3af;line-height:1.7">
+        <div style="color:#6b7280;margin-bottom:3px">{t_desc}</div>
+        <div style="color:#ffd700">📌 {t_rules}</div>
+      </div>
+    </div>""", unsafe_allow_html=True)
+
+    # ── 핵심 정보 카드 ──
     sig_colors={"strong_buy":"#00ff9d","buy":"#4ade80","watch":"#ffd700","hold":"#9ca3af","sell":"#ff4757"}
     sc=sig_colors.get(res["sig_k"],"#9ca3af")
 
@@ -2092,20 +2134,22 @@ elif menu=="🤖 AI 종목 추천" and scan_btn:
         dist_str= f"{r['dist_pct']:+.1f}%" if r["dist_pct"] else "-"
         # 불타기 표시
         bull_str = f"📈 {r['bull_score']}/3" if r["is_bull"] else f"📉 {r['bull_score']}/3"
+        t_type_r = classify_ticker_type(r["ticker"])
         rank_rows.append({
-            "순위":          i+1,
-            "종목":          r["ticker"],
-            "현재가":        f"${r['price']:.2f}",
-            "장세":          r["regime_desc"],
-            "신호":          r["signal"],
-            "BUY1 가격":     b1_str,
-            "BUY1까지":      dist_str,
-            "추가매수":      bull_str,
-            "AI 점수":       f"{r['pct']:.0f}%",
-            "추천 점수":     f"{r['total_rec_score']:.0f}점",
-            "StochRSI":      f"{r['stoch']:.1f}",
-            "1주":           f"{r['ret_1w']:+.1f}%",
-            "1개월":         f"{r['ret_1m']:+.1f}%",
+            "순위":      i+1,
+            "종목":      r["ticker"],
+            "유형":      "🔥 고변동" if t_type_r=="고변동성" else "🧊 저변동",
+            "권장전략":  "모멘텀V6" if t_type_r=="고변동성" else "피보V5",
+            "현재가":    f"${r['price']:.2f}",
+            "장세":      r["regime_desc"],
+            "신호":      r["signal"],
+            "BUY1 가격": b1_str,
+            "BUY1까지":  dist_str,
+            "추가매수":  bull_str,
+            "AI 점수":   f"{r['pct']:.0f}%",
+            "추천 점수": f"{r['total_rec_score']:.0f}점",
+            "1주":       f"{r['ret_1w']:+.1f}%",
+            "1개월":     f"{r['ret_1m']:+.1f}%",
         })
 
     df_top = pd.DataFrame(rank_rows)
@@ -2415,7 +2459,12 @@ elif menu=="📊 백테스트" and bt_btn:
         st.markdown("---")
 
         # ── 분할매수 통계 ──────────────────────────────────
-        st.markdown("#### 📊 분할매수 단계별 통계")
+        # 실제 적용된 전략 명확히 표시
+        st.markdown(f"#### 📊 분할매수 단계별 통계 — {actual_strategy}")
+        if actual_strategy == "모멘텀 추격 전략":
+            st.info("🔥 **모멘텀 전략**: 피보나치 대신 MA20>MA60 + RSI + MACD + 거래량으로 진입 → 익절 +10% / 손절 -5%")
+        else:
+            st.info("🧊 **피보나치 전략**: BUY1→BUY2→BUY3 분할매수 → 익절 UP+15%/RANGE+12% / 손절 UP-7%/RANGE-5%")
         stage_data = {
             "단계":      ["BUY1 (1차 진입)", "BUY2 (2차)", "BUY3 (3차)", "SELL (청산)"],
             "비중":      ["30%", "35%", "35%", "전량"],
