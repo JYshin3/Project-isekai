@@ -70,11 +70,46 @@ html,body,[class*="css"]{font-family:'Noto Sans KR',sans-serif; background:#0608
 # ════════════════════════════════════════════════════════════
 SWING = 30
 REGIME_PARAMS = {
-    "UPtrend":   {"fib":[0.382,0.500,0.618],"stoch":30,"stop":0.07,"tp":0.30,"desc":"📈 상승장"},
-    "RANGE":     {"fib":[0.500,0.618,0.786],"stoch":20,"stop":0.05,"tp":0.20,"desc":"➡️ 박스장"},
-    "DOWNtrend": {"fib":[0.618,0.786,0.886],"stoch":15,"stop":0.05,"tp":0.15,"desc":"📉 하락장"},
-    "UNKNOWN":   {"fib":[0.500,0.618,0.786],"stoch":20,"stop":0.07,"tp":0.25,"desc":"❓ 불명"},
+    "UPtrend":   {"fib":[0.382,0.500,0.618],"stoch":30,"stop":0.07,"tp":0.15,"desc":"📈 상승장"},
+    "RANGE":     {"fib":[0.500,0.618,0.786],"stoch":20,"stop":0.05,"tp":0.12,"desc":"➡️ 박스장"},
+    "DOWNtrend": {"fib":[0.618,0.786,0.886],"stoch":15,"stop":0.05,"tp":0.10,"desc":"📉 하락장"},
+    "UNKNOWN":   {"fib":[0.500,0.618,0.786],"stoch":20,"stop":0.07,"tp":0.12,"desc":"❓ 불명"},
 }
+
+# ── 종목 변동성 분류 ──────────────────────────────────────
+# 저변동성 (베타 < 1.2): 피보나치 분할매수 전략
+LOW_VOL_TICKERS = [
+    "SPY","QQQ","IWM","DIA","XLE","XLK","XLF","XLV","XLI",
+    "GLD","TLT","VNQ","AAPL","MSFT","GOOGL","META","AMZN",
+    "JPM","GS","BAC","V","MA","BRK-B","UNH","JNJ","PFE",
+    "XOM","CVX","NEE","DUK","KO","PG","WMT","COST","MCD",
+]
+
+# 고변동성 (베타 >= 1.2): 모멘텀 전략
+HIGH_VOL_TICKERS = [
+    "TSLA","AMD","NVDA","SMCI","ARM","PLTR","COIN","MARA",
+    "MU","MRVL","AVGO","QCOM","INTC","AMAT","KLAC","LRCX",
+    "CRM","NOW","SNOW","DDOG","CRWD","PANW","CYBR","ZS",
+    "NFLX","DIS","UBER","ABNB","SHOP","SQ","PYPL","AFRM",
+    "VRT","SMCI","APP","RBLX","SOFI","HOOD",
+]
+
+def classify_ticker_type(ticker, df=None):
+    """
+    종목이 저변동성인지 고변동성인지 판단
+    1차: 사전 정의 목록 확인
+    2차: 실제 베타 계산 (df 있을 때)
+    """
+    tk = ticker.upper()
+    if tk in LOW_VOL_TICKERS:
+        return "저변동성"
+    if tk in HIGH_VOL_TICKERS:
+        return "고변동성"
+    # 목록에 없으면 실제 변동성으로 판단
+    if df is not None and "Return" in df.columns:
+        vol = df["Return"].std() * (252**0.5)  # 연변동성
+        return "저변동성" if vol < 0.40 else "고변동성"
+    return "저변동성"  # 기본값
 
 # ════════════════════════════════════════════════════════
 # 자동 스캔 종목 풀 (섹터별 분류)
@@ -549,16 +584,131 @@ BT_VERSIONS = {
         "use_regime": True,
         "use_bull_bear": True,
         "buy_logic": "3of3",  # AND 조건
+        "strategy_type": "fib",
     },
-    "V5 — 조건 완화 (권장)": {
-        "desc": "BUY1 조건 3개 중 2개 충족 시 진입. 거래 횟수 늘어나 통계 신뢰도 상승.",
+    "V5 — 조건 완화 + 현실 익절": {
+        "desc": "BUY1: 3개 중 2개 충족. 익절 UP+15%/RG+12%로 현실화. 자주 익절 → 승률 상승.",
         "score_thr": 40,
         "use_stoch": True,
         "use_regime": True,
         "use_bull_bear": True,
-        "buy_logic": "2of3",  # OR 조건 (완화)
+        "buy_logic": "2of3",
+        "strategy_type": "fib",
+    },
+    "V6 — 고변동성 모멘텀": {
+        "desc": "TSLA/AMD 같은 고변동성 종목용. 피보나치 대신 모멘텀 추격. 익절+10% 자주 먹기.",
+        "score_thr": 50,
+        "use_stoch": False,
+        "use_regime": True,
+        "use_bull_bear": False,
+        "buy_logic": "momentum",
+        "strategy_type": "momentum",
     },
 }
+
+def run_momentum_backtest(df, trailing_stop=False, trail_pct=0.07):
+    """
+    고변동성 종목 전용 — 모멘텀 추격 전략
+
+    진입 조건 (4개 중 3개):
+      ① MA20 > MA60 (골든크로스 구간)
+      ② RSI 45~68 (과열 아님, 상승 중)
+      ③ MACD 히스토그램 양수
+      ④ 거래량 20일 평균의 1.3배 이상
+
+    익절: +10% 고정 or 트레일링 -7%
+    손절: -5% (타이트)
+    쿨다운: 손절 후 5봉 (빠른 재진입)
+    """
+    trades=[]; capital=1.0; pos=0; entry=0
+    cooldown=0; loss_streak=0; peak_price=0
+    START=max(60,30)
+
+    for i in range(START, len(df)):
+        row=df.iloc[i]; p=float(row["Close"])
+        regime=row["Regime"]
+        if regime in ["UNKNOWN","DOWNtrend"]: continue
+        if cooldown>0: cooldown-=1; continue
+
+        ma20=row.get("MA20",float("nan")); ma60=row.get("MA60",float("nan"))
+        rsi=row.get("RSI",float("nan")); macd_h=row.get("MACD_hist",float("nan"))
+        vol=row.get("Volume",0); vol_ma=row.get("VolMA20",1)
+        if any(pd.isna(x) for x in [ma20,ma60,rsi]): continue
+
+        # 모멘텀 진입 조건
+        c1 = float(ma20)>float(ma60)                  # ① 골든크로스
+        c2 = 45<=float(rsi)<=68                        # ② RSI 적정
+        c3 = (not pd.isna(macd_h)) and macd_h>0       # ③ MACD 양수
+        c4 = (vol_ma>0) and (vol/vol_ma)>=1.3         # ④ 거래량 급증
+        cond_count = int(c1)+int(c2)+int(c3)+int(c4)
+
+        if pos==0 and cond_count>=3:
+            pos=1; entry=p; peak_price=p
+            trades.append({
+                "날짜":str(row["Date"])[:10],"구분":"BUY",
+                "단계":"모멘텀 진입 (100%)",
+                "가격":round(p,2),"비중":"100%","레짐":regime,
+                "피보":"모멘텀","수익률":"-",
+                "비고":f"조건{cond_count}/4 충족 | RSI:{rsi:.0f} MACD:{'✅' if c3 else '❌'} 거래량:{'✅' if c4 else '❌'}",
+                "_pnl":0,
+            })
+
+        if pos==1:
+            peak_price=max(peak_price,p)
+            pnl=(p-entry)/entry
+            stop_p=entry*0.95         # 손절 -5%
+            tp_p=entry*1.10           # 익절 +10%
+            trail_p=peak_price*(1-trail_pct) if trailing_stop else None
+
+            exit_reason=None
+            if p<=stop_p:             exit_reason="❌ 손절 -5%"
+            elif trailing_stop and trail_p and p<=trail_p and pnl>0:
+                exit_reason=f"✅ 트레일링 (고점${peak_price:.2f} 대비 -{trail_pct*100:.0f}%)"
+            elif not trailing_stop and p>=tp_p:
+                exit_reason="✅ 익절 +10%"
+
+            if exit_reason:
+                capital*=(1+pnl); pos=0
+                if pnl<0:
+                    loss_streak+=1
+                    cooldown=5  # 손절 후 5봉 쿨다운
+                else:
+                    loss_streak=0
+                trades.append({
+                    "날짜":str(row["Date"])[:10],"구분":"SELL",
+                    "단계":exit_reason,
+                    "가격":round(p,2),"비중":"전량","레짐":regime,
+                    "피보":"청산","수익률":f"{pnl*100:+.1f}%",
+                    "비고":f"진입가 ${entry:.2f} → 청산 ${p:.2f}",
+                    "_pnl":pnl,
+                })
+                peak_price=0
+
+    # 성과 계산
+    sells=[t for t in trades if t["구분"]=="SELL"]
+    if not sells: return trades,{}
+    pnls=np.array([t["_pnl"] for t in sells])
+    wins=pnls[pnls>0]; losses=pnls[pnls<=0]
+    equity=np.cumprod(1+pnls); peak=np.maximum.accumulate(equity)
+    mdd=float(((equity-peak)/peak).min()*100)
+    wr=len(wins)/len(pnls)*100
+    buy1_dates=pd.to_datetime([t["날짜"] for t in trades if t["구분"]=="BUY"])
+    sell_dates=pd.to_datetime([t["날짜"] for t in sells])
+    n_years=max((sell_dates[-1]-buy1_dates[0]).days/365.25,0.08) if len(buy1_dates)>0 else 0.5
+    cagr=(equity[-1]**(1/n_years)-1)*100
+    sharpe=float(np.mean(pnls)/np.std(pnls)*np.sqrt(len(pnls))) if np.std(pnls)>0 else 0
+    calmar=cagr/abs(mdd) if mdd!=0 else 0
+    metrics={
+        "총 완결 거래":len(sells),"BUY1 진입":len([t for t in trades if t["구분"]=="BUY"]),
+        "BUY2 추가":0,"BUY3 추가":0,"BUY2 물타기":0,"BUY2 불타기":0,"BUY3 물타기":0,"BUY3 불타기":0,
+        "익절":len(wins),"손절":len(losses),"승률":f"{wr:.1f}%",
+        "총 수익률":f"{(equity[-1]-1)*100:.1f}%","CAGR":f"{cagr:.1f}%",
+        "MDD":f"{mdd:.1f}%","Sharpe":f"{sharpe:.2f}","Calmar":f"{calmar:.2f}",
+        "평균 익절":f"{np.mean(wins)*100:.1f}%" if len(wins)>0 else "-",
+        "평균 손절":f"{np.mean(losses)*100:.1f}%" if len(losses)>0 else "-",
+    }
+    return trades, metrics
+
 
 def run_backtest(df, score_thr=40, use_stoch=True, trailing_stop=False, trail_pct=0.10,
                  use_regime=True, use_bull_bear=True, buy_logic="2of3"):
@@ -2086,37 +2236,71 @@ elif menu=="📊 백테스트" and bt_btn:
 
     # 선택된 버전 파라미터 로드
     ver_cfg = BT_VERSIONS[bt_version]
-    # 세부 파라미터로 덮어쓰기 (슬라이더 값 우선)
+    # 종목 유형 자동 감지
+    ticker_type = classify_ticker_type(ticker_input, res["df"])
+    strategy_type = ver_cfg.get("strategy_type","fib")
+
+    # V6 또는 고변동성 종목 + V5 이상 → 모멘텀 전략 자동 권장
+    auto_momentum = (strategy_type=="momentum") or                     (ticker_type=="고변동성" and bt_version not in ["V1 — 기본 피보나치","V2 — 레짐 필터 추가"])
+
     with st.spinner(f"🧪 {ticker_input} [{bt_version}] 백테스트 계산 중..."):
-        trades, metrics = run_backtest(
-            res["df"],
-            score_thr    = bt_score_thr,          # 슬라이더 값
-            use_stoch    = ver_cfg["use_stoch"],
-            use_regime   = ver_cfg["use_regime"],
-            use_bull_bear= ver_cfg["use_bull_bear"],
-            buy_logic    = ver_cfg["buy_logic"],
-            trailing_stop= bt_trailing,
-            trail_pct    = bt_trail_pct,
-        )
+        if auto_momentum and strategy_type=="momentum":
+            trades, metrics = run_momentum_backtest(
+                res["df"],
+                trailing_stop=bt_trailing,
+                trail_pct=bt_trail_pct,
+            )
+            actual_strategy="모멘텀 추격 전략"
+        else:
+            trades, metrics = run_backtest(
+                res["df"],
+                score_thr    = bt_score_thr,
+                use_stoch    = ver_cfg["use_stoch"],
+                use_regime   = ver_cfg["use_regime"],
+                use_bull_bear= ver_cfg["use_bull_bear"],
+                buy_logic    = ver_cfg["buy_logic"],
+                trailing_stop= bt_trailing,
+                trail_pct    = bt_trail_pct,
+            )
+            actual_strategy="피보나치 분할매수 전략"
 
     st.markdown(f"### 📊 {ticker_input} 백테스트 결과 ({period_input})")
 
-    # 버전 설명 배너
+    # 종목 유형 + 버전 설명 배너
     ver_cfg = BT_VERSIONS[bt_version]
+    type_color = "#ff8c00" if ticker_type=="고변동성" else "#00d4ff"
+    type_icon  = "🔥" if ticker_type=="고변동성" else "🧊"
     st.markdown(f"""
-    <div style="background:#0f172a;border:1.5px solid #00d4ff;
+    <div style="background:#0f172a;border:1.5px solid {type_color};
                 border-radius:10px;padding:14px 16px;margin-bottom:12px">
-      <div style="color:#00d4ff;font-weight:700;margin-bottom:6px">
-        📋 {bt_version}
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <div style="color:{type_color};font-weight:700;margin-bottom:4px">
+            {type_icon} {ticker_input} — {ticker_type} 종목
+          </div>
+          <div style="color:#9ca3af;font-size:.8rem">
+            적용 전략: <b style="color:#e8eaf6">{actual_strategy}</b>
+          </div>
+        </div>
+        <div style="text-align:right;color:#6b7280;font-size:.76rem">
+          {bt_version}
+        </div>
       </div>
-      <div style="color:#9ca3af;font-size:.82rem">{ver_cfg["desc"]}</div>
+      <div style="color:#6b7280;font-size:.78rem;margin-top:8px;
+                  border-top:1px solid #1e2d4a;padding-top:8px">
+        {ver_cfg["desc"]}
+      </div>
     </div>""", unsafe_allow_html=True)
+
+    # 고변동성 종목에서 피보나치 전략 사용 시 경고
+    if ticker_type=="고변동성" and strategy_type!="momentum":
+        st.warning(f"⚠️ {ticker_input}은 고변동성 종목입니다. **V6 — 고변동성 모멘텀** 전략을 함께 비교해보세요!")
 
     # 파라미터 카드
     param_cols = st.columns(5)
-    param_cols[0].markdown(f"""<div class="mc"><div class="mc-lbl">진입 방식</div>
-    <div class="mc-val" style="color:#00d4ff">
-    {"2/3 완화" if ver_cfg["buy_logic"]=="2of3" else "3/3 엄격"}</div></div>""",
+    param_cols[0].markdown(f"""<div class="mc"><div class="mc-lbl">종목 유형</div>
+    <div class="mc-val" style="color:{'#ff8c00' if ticker_type=='고변동성' else '#00d4ff'}">
+    {"🔥 고변동성" if ticker_type=="고변동성" else "🧊 저변동성"}</div></div>""",
     unsafe_allow_html=True)
     param_cols[1].markdown(f"""<div class="mc"><div class="mc-lbl">AI 점수 기준</div>
     <div class="mc-val" style="color:#00d4ff">{bt_score_thr}%</div></div>""",
@@ -2360,6 +2544,8 @@ elif menu=="📊 백테스트" and bt_btn:
 종목: {ticker_input}
 분석일: {datetime.datetime.now().strftime("%Y-%m-%d")}
 기간: {period_input} (실제 2년 데이터 사용)
+종목 유형: {ticker_type}
+적용 전략: {actual_strategy}
 전략 버전: {bt_version}
 레짐: {res["regime"]} ({res["cfg"]["desc"]})
 
