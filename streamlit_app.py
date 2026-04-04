@@ -1125,22 +1125,40 @@ with st.sidebar:
     if menu=="🔍 종목 분석":
         analyze_btn=st.button("🔍 분석하기",use_container_width=True,type="primary")
     if menu=="📊 백테스트":
-        st.markdown("**📋 전략 단계 선택**")
+        st.markdown("**📋 전략 선택**")
+        st.caption("저변동성 → V5 / 고변동성 → V6")
         bt_version = st.radio("",
             ["V1 — 기본 피보나치",
              "V2 — 레짐 필터 추가",
              "V3 — AI 점수 필터 추가",
              "V4 — 물타기/불타기 (현재 전략)",
-             "V5 — 조건 완화 (권장)"],
+             "V5 — 조건 완화 + 현실 익절",
+             "V6 — 고변동성 모멘텀"],
             index=4,
             label_visibility="collapsed",
-            help="단계별로 어떤 필터가 효과 있는지 비교"
         )
         st.markdown("---")
-        st.markdown("**⚙️ 세부 파라미터**")
-        bt_score_thr = st.slider(
-            "AI 점수 기준 (%)", 25, 65, 40, 5,
-            help="낮을수록 거래 많아짐")
+        # V6 선택 시 간단 설명
+        if bt_version == "V6 — 고변동성 모멘텀":
+            st.markdown("""
+            <div style="background:#1a0f00;border:1px solid #ff8c00;
+                        border-radius:8px;padding:10px;font-size:.76rem;
+                        color:#ffd700;line-height:1.7">
+            🔥 <b>모멘텀 전략</b><br>
+            진입: 4개 중 3개 충족<br>
+            ① MA20 > MA60<br>
+            ② RSI 45~68<br>
+            ③ MACD 양수<br>
+            ④ 거래량 1.3배↑<br>
+            익절: +10% / 손절: -5%
+            </div>""", unsafe_allow_html=True)
+        else:
+            st.markdown("**⚙️ 세부 파라미터**")
+            bt_score_thr = st.slider(
+                "AI 점수 기준 (%)", 25, 65, 40, 5,
+                help="낮을수록 거래 많아짐")
+        if bt_version == "V6 — 고변동성 모멘텀":
+            bt_score_thr = 50  # V6는 고정
         bt_trailing = st.toggle(
             "트레일링 스탑",
             value=False,
@@ -1156,6 +1174,20 @@ with st.sidebar:
     st.markdown("---")
     st.markdown('<div class="warn">⚠️ 참고용 분석입니다.<br>투자 손익은 본인 책임입니다.</div>',
                 unsafe_allow_html=True)
+
+# ── 백테스트 변수 기본값 ──────────────────────────────────
+# 백테스트 탭 외 메뉴에서 변수 미정의 오류 방지
+# session_state 대신 Python 변수로 안전하게 초기화
+if menu != "📊 백테스트":
+    bt_version   = "V5 — 조건 완화 + 현실 익절"
+    bt_score_thr = 40
+    bt_trailing  = False
+    bt_trail_pct = 0.10
+    bt_btn       = False
+    ver_cfg      = BT_VERSIONS[bt_version]
+    ticker_type  = "저변동성"
+    actual_strategy = "피보나치 분할매수 전략"
+    auto_momentum   = False
 
 # ════════════════════════════════════════════════════════════
 # 헤더
@@ -1195,19 +1227,22 @@ if menu=="🏠 홈 대시보드":
             t_type = classify_ticker_type(tk)
             row["유형"] = "🔥 고변동" if t_type=="고변동성" else "🧊 저변동"
             row["권장전략"] = "모멘텀V6" if t_type=="고변동성" else "피보V5"
-        df_home=pd.DataFrame(table_data)
+        # 컬럼 순서 명시적으로 지정
+        df_home=pd.DataFrame(table_data)[[
+            "종목","유형","권장전략","현재가","1주","1개월","점수","레짐","신호","행동"
+        ]]
         st.dataframe(df_home, use_container_width=True, hide_index=True,
             column_config={
-                "종목":st.column_config.TextColumn("종목",width="small"),
-                "현재가":st.column_config.TextColumn("현재가",width="small"),
-                "유형":st.column_config.TextColumn("유형",width="small"),
-                "권장전략":st.column_config.TextColumn("권장전략",width="small"),
-                "점수":st.column_config.TextColumn("AI 점수",width="small"),
-                "레짐":st.column_config.TextColumn("장세",width="small"),
-                "신호":st.column_config.TextColumn("신호",width="medium"),
-                "1주":st.column_config.TextColumn("1주",width="small"),
-                "1개월":st.column_config.TextColumn("1개월",width="small"),
-                "행동":st.column_config.TextColumn("권장 행동",width="small"),
+                "종목":     st.column_config.TextColumn("종목",    width="small"),
+                "유형":     st.column_config.TextColumn("유형",    width="small"),
+                "권장전략": st.column_config.TextColumn("권장전략",width="small"),
+                "현재가":   st.column_config.TextColumn("현재가",  width="small"),
+                "1주":      st.column_config.TextColumn("1주",     width="small"),
+                "1개월":    st.column_config.TextColumn("1개월",   width="small"),
+                "점수":     st.column_config.TextColumn("AI 점수", width="small"),
+                "레짐":     st.column_config.TextColumn("장세",    width="small"),
+                "신호":     st.column_config.TextColumn("신호",    width="medium"),
+                "행동":     st.column_config.TextColumn("행동",    width="small"),
             })
     st.markdown("---")
     st.markdown("### 📌 사용 방법")
@@ -1275,12 +1310,15 @@ elif menu=="🔍 종목 분석" and analyze_btn:
     sig_colors={"strong_buy":"#00ff9d","buy":"#4ade80","watch":"#ffd700","hold":"#9ca3af","sell":"#ff4757"}
     sc=sig_colors.get(res["sig_k"],"#9ca3af")
 
-    c1,c2,c3,c4,c5=st.columns(5)
+    c1,c2,c3,c4,c5,c6=st.columns(6)
     mcard(c1,"현재가",f"${res['price']:.2f}","#00d4ff")
-    mcard(c2,"AI 점수",f"{res['pct']:.0f}%",sc,f"{res['ts']+res['cs']+res['ss']+res['irs']:.0f}/16 모듈")
+    mcard(c2,"AI 점수",f"{res['pct']:.0f}%",sc,f"{res['ts']+res['cs']+res['ss']+res['irs']:.0f}/16")
     mcard(c3,"장세",res["cfg"]["desc"],"#e8eaf6")
-    mcard(c4,"신호",res["signal"],sc)
-    mcard(c5,"권장 행동",res["action"],sc)
+    mcard(c4,"종목 유형",
+          "🔥 고변동성" if ticker_type_a=="고변동성" else "🧊 저변동성",
+          "#ff8c00" if ticker_type_a=="고변동성" else "#00d4ff")
+    mcard(c5,"신호",res["signal"],sc)
+    mcard(c6,"권장 행동",res["action"],sc)
     st.markdown("---")
 
     # ── 매매 플랜 표 (계산 근거 포함) ──
@@ -2157,6 +2195,8 @@ elif menu=="🤖 AI 종목 추천" and scan_btn:
         column_config={
             "순위":      st.column_config.NumberColumn(width="small"),
             "종목":      st.column_config.TextColumn(width="small"),
+            "유형":      st.column_config.TextColumn("유형",     width="small"),
+            "권장전략":  st.column_config.TextColumn("권장전략", width="small"),
             "현재가":    st.column_config.TextColumn(width="small"),
             "장세":      st.column_config.TextColumn(width="small"),
             "신호":      st.column_config.TextColumn(width="medium"),
@@ -2278,8 +2318,8 @@ elif menu=="📊 백테스트" and bt_btn:
             st.error("데이터를 가져올 수 없습니다. 티커를 확인하세요.")
             st.stop()
 
-    # 선택된 버전 파라미터 로드
-    ver_cfg = BT_VERSIONS[bt_version]
+    # 선택된 버전 파라미터 로드 (KeyError 방지)
+    ver_cfg = BT_VERSIONS.get(bt_version, BT_VERSIONS["V5 — 조건 완화 + 현실 익절"])
     # 종목 유형 자동 감지
     ticker_type = classify_ticker_type(ticker_input, res["df"])
     strategy_type = ver_cfg.get("strategy_type","fib")
@@ -2311,7 +2351,7 @@ elif menu=="📊 백테스트" and bt_btn:
     st.markdown(f"### 📊 {ticker_input} 백테스트 결과 ({period_input})")
 
     # 종목 유형 + 버전 설명 배너
-    ver_cfg = BT_VERSIONS[bt_version]
+    ver_cfg = BT_VERSIONS.get(bt_version, BT_VERSIONS["V5 — 조건 완화 + 현실 익절"])
     type_color = "#ff8c00" if ticker_type=="고변동성" else "#00d4ff"
     type_icon  = "🔥" if ticker_type=="고변동성" else "🧊"
     st.markdown(f"""
@@ -2638,7 +2678,7 @@ StochRSI:   {res["cfg"]["stoch"]} 이하
 
 --- 백테스트 설정 ---
 전략 버전:      {bt_version}
-진입 방식:      {"2/3 완화" if ver_cfg["buy_logic"]=="2of3" else "3/3 엄격"}
+진입 방식:      {"2/3 완화" if ver_cfg["buy_logic"]=="2of3" else "모멘텀 추격" if ver_cfg["buy_logic"]=="momentum" else "3/3 엄격"}
 AI 점수 기준:   {bt_score_thr}%
 레짐 필터:      {"ON" if ver_cfg["use_regime"] else "OFF"}
 StochRSI 필터: {"ON" if ver_cfg["use_stoch"] else "OFF"}
