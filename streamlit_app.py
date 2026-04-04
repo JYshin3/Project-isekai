@@ -2402,8 +2402,12 @@ Fib구간:    {res["cfg"]["fib"]}
 StochRSI:   {res["cfg"]["stoch"]} 이하
 
 --- 백테스트 설정 ---
+전략 버전:      {bt_version}
+진입 방식:      {"2/3 완화" if ver_cfg["buy_logic"]=="2of3" else "3/3 엄격"}
 AI 점수 기준:   {bt_score_thr}%
-StochRSI 필터: {"ON" if bt_use_stoch else "OFF"}
+레짐 필터:      {"ON" if ver_cfg["use_regime"] else "OFF"}
+StochRSI 필터: {"ON" if ver_cfg["use_stoch"] else "OFF"}
+물타기/불타기:  {"ON" if ver_cfg["use_bull_bear"] else "OFF"}
 익절 방식:      {"트레일링" if bt_trailing else "고정"}
 트레일링 폭:    {f"-{bt_trail_pct*100:.0f}%" if bt_trailing else "N/A"}
 ============================="""
