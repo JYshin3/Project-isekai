@@ -79,10 +79,15 @@ REGIME_PARAMS = {
 # ── 종목 변동성 분류 ──────────────────────────────────────
 # 저변동성 (베타 < 1.2): 피보나치 분할매수 전략
 LOW_VOL_TICKERS = [
+    # 일반 저변동성
     "SPY","QQQ","IWM","DIA","XLE","XLK","XLF","XLV","XLI",
     "GLD","TLT","VNQ","AAPL","MSFT","GOOGL","META","AMZN",
     "JPM","GS","BAC","V","MA","BRK-B","UNH","JNJ","PFE",
     "XOM","CVX","NEE","DUK","KO","PG","WMT","COST","MCD",
+    # 하락장 대응 — 피보나치 전략 적합
+    "SQQQ","SPXS","SOXS","SDOW","SH","PSQ","VIXY","SRTY",  # 인버스 ETF
+    "GLD","IAU","SLV","GDX","GDXJ","TLT","IEF","BIL","SGOV",  # 안전자산
+    "KO","PG","JNJ","WMT","MCD","XLU","XLP","XLV","CL","GIS",  # 방어주
 ]
 
 # 고변동성 (베타 >= 1.2): 모멘텀 전략
@@ -131,12 +136,90 @@ SCAN_UNIVERSE = {
                    "XLI","GLD","TLT","HYG"],
     "기타 성장주": ["VRT","PLTR","ARM","APP","UBER","ABNB","COIN","RBLX",
                    "SHOP","SQ","PYPL","AFRM"],
+    # ── 하락장 대응 섹터 ──────────────────────────────
+    "인버스 ETF":  ["SQQQ","SPXS","SOXS","SDOW","SH","PSQ",
+                   "SARK","LABD","SRTY","VIXY"],
+    "안전자산":    ["GLD","IAU","SLV","GDX","GDXJ",
+                   "TLT","IEF","SHY","BIL","SGOV"],
+    "방어주":      ["KO","PG","JNJ","WMT","MCD","CL","GIS",
+                   "K","CPB","HSY","XLU","XLP","XLV","VPU"],
 }
 # 전체 풀 (중복 제거)
 ALL_TICKERS = list(dict.fromkeys(
     t for tks in SCAN_UNIVERSE.values() for t in tks
 ))
-DEFAULT_WATCHLIST = ALL_TICKERS[:20]  # 사이드바 기본값용
+DEFAULT_WATCHLIST = ALL_TICKERS[:20]
+
+# ── 하락장 전용 종목 목록 ──────────────────────────────────
+BEAR_TICKERS = {
+    "인버스 ETF": {
+        "SQQQ": "나스닥 3배 인버스",
+        "SPXS": "S&P500 3배 인버스",
+        "SOXS": "반도체 3배 인버스",
+        "SDOW": "다우 3배 인버스",
+        "SH":   "S&P500 1배 인버스",
+        "PSQ":  "나스닥 1배 인버스",
+        "VIXY": "VIX 단기 선물",
+        "SRTY": "러셀2000 3배 인버스",
+    },
+    "안전자산": {
+        "GLD":  "금 ETF (SPDR)",
+        "IAU":  "금 ETF (iShares)",
+        "SLV":  "은 ETF",
+        "GDX":  "금광업체 ETF",
+        "TLT":  "20년 국채 ETF",
+        "IEF":  "7-10년 국채 ETF",
+        "BIL":  "단기채 ETF",
+        "SGOV": "초단기채 ETF",
+    },
+    "방어주": {
+        "KO":  "코카콜라 (필수소비재)",
+        "PG":  "P&G (생활용품)",
+        "WMT": "월마트 (유통)",
+        "MCD": "맥도날드 (외식)",
+        "JNJ": "존슨앤존슨 (헬스케어)",
+        "XLU": "유틸리티 ETF",
+        "XLP": "필수소비재 ETF",
+        "XLV": "헬스케어 ETF",
+    },
+}
+ALL_BEAR_TICKERS = list(dict.fromkeys(
+    t for group in BEAR_TICKERS.values() for t in group.keys()
+))
+
+@st.cache_data(ttl=600)
+def detect_market_regime():
+    """
+    SPY 기준으로 전체 시장 레짐 감지
+    returns: "상승장" / "하락장" / "박스장"
+    """
+    try:
+        spy = yf.download("SPY", period="1y", interval="1d",
+                          auto_adjust=True, progress=False)
+        if spy.empty: return "알 수 없음"
+        if isinstance(spy.columns, pd.MultiIndex):
+            spy.columns = spy.columns.get_level_values(0)
+        spy = spy.reset_index()
+        if "Datetime" in spy.columns:
+            spy.rename(columns={"Datetime":"Date"}, inplace=True)
+        close   = spy["Close"]
+        ma200   = close.rolling(200).mean().iloc[-1]
+        ma50    = close.rolling(50).mean().iloc[-1]
+        current = float(close.iloc[-1])
+        roc20   = float((close.iloc[-1]/close.iloc[-21]-1)*100) if len(close)>21 else 0
+        high52  = float(close.rolling(252).max().iloc[-1])
+        draw52  = (current/high52-1)*100
+
+        if current > ma200 and current > ma50 and roc20 > 0:
+            return "상승장"
+        elif current < ma200 and roc20 < -3:
+            return "하락장"
+        elif draw52 < -15:
+            return "조정장"
+        else:
+            return "박스장"
+    except Exception:
+        return "알 수 없음"
 
 # ════════════════════════════════════════════════════════════
 # 지표 계산
@@ -1373,6 +1456,23 @@ if menu=="🏠 홈 대시보드":
                 "행동":     st.column_config.TextColumn("행동",    width="small"),
             })
     st.markdown("---")
+    # 하락장 경고 배너 (홈에서도 표시)
+    try:
+        mkt = detect_market_regime()
+        if mkt in ["하락장","조정장"]:
+            st.markdown(f"""
+            <div style="background:#1a0000;border:2px solid #ff4757;
+                        border-radius:10px;padding:12px 16px;margin-bottom:12px">
+              <div style="color:#ff4757;font-weight:700;font-size:.95rem">
+                🔴 현재 시장: {mkt}
+              </div>
+              <div style="color:#fca5a5;font-size:.8rem;margin-top:4px">
+                📌 AI 종목 추천 탭에서 하락장 대응 종목(인버스 ETF·안전자산·방어주)을 확인하세요.
+              </div>
+            </div>""", unsafe_allow_html=True)
+    except Exception:
+        pass
+
     st.markdown("### 📌 사용 방법")
     c1,c2,c3,c4=st.columns(4)
     for col,icon,title,desc in [
@@ -2286,23 +2386,195 @@ elif menu=="🔍 종목 분석" and analyze_btn:
 # ════════════════════════════════════════════════════════════
 elif menu=="🤖 AI 종목 추천" and scan_btn:
 
+    # ── 시장 레짐 먼저 감지 ──────────────────────────────
+    with st.spinner("📡 전체 시장 레짐 감지 중..."):
+        market_regime = detect_market_regime()
+
+    # ── 시장 레짐 배너 ───────────────────────────────────
+    regime_colors = {
+        "상승장": "#00ff9d", "박스장": "#ffd700",
+        "조정장": "#ff8c00", "하락장": "#ff4757", "알 수 없음": "#6b7280"
+    }
+    regime_icons = {
+        "상승장": "🚀", "박스장": "➡️",
+        "조정장": "⚠️", "하락장": "🔴", "알 수 없음": "❓"
+    }
+    rc = regime_colors.get(market_regime, "#6b7280")
+    ri = regime_icons.get(market_regime, "❓")
+    st.markdown(f"""
+    <div style="background:#0f172a;border:2px solid {rc};
+                border-radius:12px;padding:14px 16px;margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <div style="color:{rc};font-weight:700;font-size:1.1rem">
+            {ri} 현재 시장: {market_regime}
+          </div>
+          <div style="color:#9ca3af;font-size:.8rem;margin-top:4px">
+            SPY 기준 MA200·MA50·ROC 종합 판단
+          </div>
+        </div>
+        <div style="color:#6b7280;font-size:.76rem;text-align:right">
+          {"📈 일반 종목 추천" if market_regime in ["상승장","박스장"] else "🛡️ 하락장 대응 종목 우선 표시"}
+        </div>
+      </div>
+    </div>""", unsafe_allow_html=True)
+
+    # ── 하락장/조정장일 때 → 하락장 대응 섹션 먼저 표시 ──
+    if market_regime in ["하락장", "조정장"]:
+        st.markdown("## 🛡️ 하락장 대응 종목 추천")
+        st.markdown("""
+        <div style="background:#1a0000;border:1px solid #ff4757;
+                    border-radius:8px;padding:12px 16px;margin-bottom:16px;
+                    font-size:.82rem;color:#fca5a5;line-height:1.8">
+        ⚠️ 현재 하락장입니다. 아래 종목들은 시장 하락 시 수익이 나는 종목들이에요.<br>
+        📌 전략: <b>피보나치 분할매수 V5</b> — 인버스 ETF도 눌림목에서 분할매수<br>
+        ⚡ 주의: 인버스 ETF는 장기 보유 시 손실 가능. 단기 스윙 목적으로만 활용
+        </div>""", unsafe_allow_html=True)
+
+        # 하락장 종목 스캔
+        bear_scan_results = []
+        bear_prog = st.progress(0)
+        bear_status = st.empty()
+
+        for i, tk in enumerate(ALL_BEAR_TICKERS):
+            bear_status.text(f"하락장 종목 스캔 중: {tk} ({i+1}/{len(ALL_BEAR_TICKERS)})")
+            r = scan_single(tk)
+            if r and isinstance(r, dict) and "signal" in r:
+                r["bear_type"] = next(
+                    (grp for grp, tks in BEAR_TICKERS.items() if tk in tks), "기타"
+                )
+                r["bear_desc"] = BEAR_TICKERS.get(
+                    r["bear_type"], {}
+                ).get(tk, "")
+                bear_scan_results.append(r)
+            bear_prog.progress((i+1)/len(ALL_BEAR_TICKERS))
+
+        bear_prog.empty(); bear_status.empty()
+
+        if bear_scan_results:
+            bear_scan_results = sorted(
+                bear_scan_results,
+                key=lambda x: x.get("total_rec_score", 0), reverse=True
+            )
+
+            # 섹터별 탭으로 표시
+            tabs = st.tabs(["🔻 인버스 ETF", "🥇 안전자산", "🛡️ 방어주", "📊 전체"])
+
+            for tab_idx, (tab, grp_name) in enumerate(zip(
+                tabs, ["인버스 ETF", "안전자산", "방어주"]
+            )):
+                with tab:
+                    grp_results = [r for r in bear_scan_results
+                                   if r.get("bear_type") == grp_name]
+                    if not grp_results:
+                        st.info(f"{grp_name} 종목 중 현재 신호 없음")
+                        continue
+
+                    bear_rows = []
+                    for r in grp_results:
+                        b1 = r.get("fib_lv", [None])[0]
+                        bear_rows.append({
+                            "종목":      r["ticker"],
+                            "설명":      r.get("bear_desc", ""),
+                            "현재가":    f"${r['price']:.2f}",
+                            "신호":      r["signal"],
+                            "BUY1":      f"${b1:.2f}" if b1 else "대기",
+                            "BUY1까지":  f"{r.get('dist_pct',0):+.1f}%",
+                            "AI 점수":   f"{r.get('pct',0):.0f}%",
+                            "추천 점수": f"{r.get('total_rec_score',0):.0f}점",
+                            "1주":       f"{r.get('ret_1w',0):+.1f}%",
+                            "1개월":     f"{r.get('ret_1m',0):+.1f}%",
+                        })
+                    st.dataframe(pd.DataFrame(bear_rows),
+                        use_container_width=True, hide_index=True,
+                        column_config={
+                            "종목":      st.column_config.TextColumn(width="small"),
+                            "설명":      st.column_config.TextColumn(width="medium"),
+                            "현재가":    st.column_config.TextColumn(width="small"),
+                            "신호":      st.column_config.TextColumn(width="medium"),
+                            "BUY1":      st.column_config.TextColumn(width="small"),
+                            "BUY1까지":  st.column_config.TextColumn(width="small"),
+                            "AI 점수":   st.column_config.TextColumn(width="small"),
+                            "추천 점수": st.column_config.TextColumn(width="small"),
+                        })
+
+                    # 상세 카드
+                    top_bear = grp_results[:3]
+                    for r in top_bear:
+                        b1=r.get("fib_lv",[None,None,None])[0]
+                        b2=r.get("fib_lv",[None,None,None])[1]
+                        b3=r.get("fib_lv",[None,None,None])[2]
+                        with st.expander(
+                            f"📋 {r['ticker']} — {r.get('bear_desc','')} | {r['signal']}",
+                            expanded=False
+                        ):
+                            plan_rows = [
+                                {"구분":"1차 매수 (BUY1)",
+                                 "목표가":f"${b1:.2f}" if b1 else "대기",
+                                 "현재가 대비":f"{(b1/r['price']-1)*100:+.1f}%" if b1 else "-",
+                                 "전략":"피보나치V5"},
+                                {"구분":"2차 매수 (BUY2)",
+                                 "목표가":f"${b2:.2f}" if b2 else "대기",
+                                 "현재가 대비":f"{(b2/r['price']-1)*100:+.1f}%" if b2 else "-",
+                                 "전략":"피보나치V5"},
+                                {"구분":"3차 매수 (BUY3)",
+                                 "목표가":f"${b3:.2f}" if b3 else "대기",
+                                 "현재가 대비":f"{(b3/r['price']-1)*100:+.1f}%" if b3 else "-",
+                                 "전략":"피보나치V5"},
+                                {"구분":"손절선",
+                                 "목표가":f"${r['stop_s']:.2f}" if r.get("stop_s") else "-",
+                                 "현재가 대비":f"{(r['stop_s']/r['price']-1)*100:+.1f}%" if r.get("stop_s") else "-",
+                                 "전략":""},
+                                {"구분":"익절 목표",
+                                 "목표가":f"${r['tp_s']:.2f}" if r.get("tp_s") else "-",
+                                 "현재가 대비":f"{(r['tp_s']/r['price']-1)*100:+.1f}%" if r.get("tp_s") else "-",
+                                 "전략":""},
+                            ]
+                            st.dataframe(pd.DataFrame(plan_rows),
+                                use_container_width=True, hide_index=True)
+                            st.caption("💡 피보나치 분할매수 V5 전략으로 백테스트해보세요")
+
+            with tabs[3]:  # 전체
+                all_bear_rows = []
+                for r in bear_scan_results:
+                    b1 = r.get("fib_lv",[None])[0]
+                    all_bear_rows.append({
+                        "종목":     r["ticker"],
+                        "유형":     r.get("bear_type",""),
+                        "설명":     r.get("bear_desc",""),
+                        "현재가":   f"${r['price']:.2f}",
+                        "신호":     r["signal"],
+                        "BUY1":     f"${b1:.2f}" if b1 else "대기",
+                        "점수":     f"{r.get('total_rec_score',0):.0f}점",
+                        "1주":      f"{r.get('ret_1w',0):+.1f}%",
+                        "1개월":    f"{r.get('ret_1m',0):+.1f}%",
+                    })
+                st.dataframe(pd.DataFrame(all_bear_rows),
+                    use_container_width=True, hide_index=True)
+        else:
+            st.info("현재 하락장 대응 종목 중 신호 있는 종목이 없습니다.")
+
+        st.markdown("---")
+        st.markdown("## 📊 일반 종목 스캔 (참고용)")
+
+    # ── 일반 종목 스캔 ───────────────────────────────────
     # 스캔할 종목 목록 결정
     if scan_mode == "✏️ 직접 종목 입력":
         tickers = [t.strip().upper() for t in custom_list.split("\n") if t.strip()]
     else:
-        # 자동: 섹터 선택 또는 전체
         if selected_sectors:
             tickers = list(dict.fromkeys(
-                t for s in selected_sectors for t in SCAN_UNIVERSE[s]
+                t for s in selected_sectors
+                for t in SCAN_UNIVERSE.get(s, [])
+                if s not in ["인버스 ETF","안전자산","방어주"]
             ))
         else:
             tickers = ALL_TICKERS
     if not tickers: st.error("종목을 입력하세요."); st.stop()
 
     st.markdown(f"### 🤖 AI 자동 스캔 — {len(tickers)}개 종목 분석 중")
-    st.caption("피보나치 BUY 구간에 근접한 종목을 자동으로 찾아 추천 점수순으로 정렬합니다.")
+    st.caption("피보나치/모멘텀 신호 종목을 자동으로 찾아 추천 점수순으로 정렬합니다.")
 
-    # ── 스캔 실행 ──
     prog_bar   = st.progress(0)
     status_txt = st.empty()
     scan_results = []
@@ -2315,24 +2587,19 @@ elif menu=="🤖 AI 종목 추천" and scan_btn:
 
     prog_bar.empty(); status_txt.empty()
 
-    # ── 필터링 & 정렬 ──
-    # 1차: None 제거 + 하락장 제외 + 필수 키 확인
     scan_results = [
         r for r in scan_results
-        if r is not None
-        and isinstance(r, dict)
-        and "signal" in r
-        and "regime" in r
-        # DOWNtrend는 scan_single에서 이미 필터링됨
-        # 여기서는 None/키 없는 것만 제거
+        if r is not None and isinstance(r, dict) and "signal" in r and "regime" in r
     ]
-    # 2차: 추천 점수 기준 정렬
     scan_results = sorted(scan_results,
                           key=lambda x: x["total_rec_score"], reverse=True)
     top_n_results = scan_results[:top_n]
 
     if not scan_results:
-        st.warning("조건에 맞는 종목이 없습니다. 섹터를 늘리거나 다시 시도하세요.")
+        if market_regime in ["하락장","조정장"]:
+            st.info("📌 하락장에서는 위의 하락장 대응 종목을 참고하세요.")
+        else:
+            st.warning("조건에 맞는 종목이 없습니다. 섹터를 늘리거나 다시 시도하세요.")
         st.stop()
 
     # ── 요약 카드 ──
