@@ -527,7 +527,9 @@ def scan_single(ticker):
             signal       = "⏳ 피보 원거리"
             strategy_rec = "피보나치V5"
         else:
-            return None  # 둘 다 없으면 추천 제외
+            # 피보나치도 모멘텀도 없어도 — 원거리 표시 후 포함
+            signal       = "⏳ 신호 없음 (대기)"
+            strategy_rec = "관망"
 
         # ── 불타기 판단 ──────────────────────────────────
         bull_score = int(row.get("BullAdd_score", 0))
@@ -2589,17 +2591,62 @@ elif menu=="🤖 AI 종목 추천" and scan_btn:
 
     scan_results = [
         r for r in scan_results
-        if r is not None and isinstance(r, dict) and "signal" in r and "regime" in r
+        if r is not None
+        and isinstance(r, dict)
+        and "signal" in r
+        and "regime" in r
+        and r.get("signal", "") != "⏳ 신호 없음 (대기)"  # 신호 없는 종목 제외
     ]
+    # 신호 없는 것 제외 후에도 없으면 전체 포함 (빈 결과 방지)
+    if not scan_results:
+        scan_results = [
+            r for r in [scan_single(tk) for tk in tickers[:20]]
+            if r is not None and isinstance(r, dict) and "signal" in r
+        ]
     scan_results = sorted(scan_results,
-                          key=lambda x: x["total_rec_score"], reverse=True)
+                          key=lambda x: x.get("total_rec_score", 0), reverse=True)
     top_n_results = scan_results[:top_n]
 
     if not scan_results:
         if market_regime in ["하락장","조정장"]:
             st.info("📌 하락장에서는 위의 하락장 대응 종목을 참고하세요.")
         else:
-            st.warning("조건에 맞는 종목이 없습니다. 섹터를 늘리거나 다시 시도하세요.")
+            st.warning("⚠️ 조건에 맞는 종목이 없습니다.")
+            st.markdown("""
+            **가능한 원인:**
+            - 현재 시장이 하락장이라 대부분 종목이 DOWNtrend 분류
+            - 피보나치/모멘텀 신호 없는 구간
+
+            **해결 방법:**
+            - 하락장 대응 섹터(인버스 ETF/안전자산/방어주) 선택
+            - 직접 입력으로 특정 종목만 스캔
+            """)
+            # 디버그: 첫 번째 종목 강제 스캔 결과 표시
+            if tickers:
+                test_tk = tickers[0]
+                with st.expander(f"🔍 진단: {test_tk} 스캔 결과"):
+                    import traceback
+                    try:
+                        import yfinance as yf
+                        df_test = yf.download(test_tk, period="2y", interval="1d",
+                                              auto_adjust=True, progress=False)
+                        if df_test.empty:
+                            st.error(f"{test_tk}: 데이터 없음")
+                        else:
+                            if isinstance(df_test.columns, pd.MultiIndex):
+                                df_test.columns = df_test.columns.get_level_values(0)
+                            df_test = df_test.reset_index()
+                            if "Datetime" in df_test.columns:
+                                df_test.rename(columns={"Datetime":"Date"}, inplace=True)
+                            df_test = build_features(df_test)
+                            row_test = df_test.dropna(subset=["Regime"]).iloc[-1]
+                            regime_test = row_test["Regime"]
+                            draw52_test = float(row_test.get("Draw52w", 0)) if "Draw52w" in row_test else "없음"
+                            st.write(f"레짐: **{regime_test}**")
+                            st.write(f"52주 낙폭: **{draw52_test}%**")
+                            st.write(f"데이터: {len(df_test)}봉")
+                    except Exception as e:
+                        st.error(f"진단 오류: {e}")
         st.stop()
 
     # ── 요약 카드 ──
