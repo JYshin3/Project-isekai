@@ -514,18 +514,60 @@ STRATEGY_DESC = {
     "regime_params": REGIME_PARAMS,
 }
 
-def run_backtest(df, score_thr=45, use_stoch=True, trailing_stop=False, trail_pct=0.10):
+# ════════════════════════════════════════════════════════════
+# 단계별 백테스트 버전 정의
+# ════════════════════════════════════════════════════════════
+BT_VERSIONS = {
+    "V1 — 기본 피보나치": {
+        "desc": "피보나치 BUY1 도달 시 바로 진입. 레짐/점수/StochRSI 필터 없음.",
+        "score_thr": 0,
+        "use_stoch": False,
+        "use_regime": False,
+        "use_bull_bear": False,
+        "buy_logic": "3of3",  # 조건 없음 = 무조건 진입
+    },
+    "V2 — 레짐 필터 추가": {
+        "desc": "피보나치 + DOWNtrend 제외. MA60 위에서만 진입.",
+        "score_thr": 0,
+        "use_stoch": False,
+        "use_regime": True,
+        "use_bull_bear": False,
+        "buy_logic": "3of3",
+    },
+    "V3 — AI 점수 필터 추가": {
+        "desc": "V2 + AI 4-Factor 점수 필터. 점수 미달 시 진입 차단.",
+        "score_thr": 45,
+        "use_stoch": False,
+        "use_regime": True,
+        "use_bull_bear": False,
+        "buy_logic": "3of3",
+    },
+    "V4 — 물타기/불타기 (현재 전략)": {
+        "desc": "V3 + StochRSI 필터 + 물타기/불타기 자동 판단. 현재 전략 그대로.",
+        "score_thr": 50,
+        "use_stoch": True,
+        "use_regime": True,
+        "use_bull_bear": True,
+        "buy_logic": "3of3",  # AND 조건
+    },
+    "V5 — 조건 완화 (권장)": {
+        "desc": "BUY1 조건 3개 중 2개 충족 시 진입. 거래 횟수 늘어나 통계 신뢰도 상승.",
+        "score_thr": 40,
+        "use_stoch": True,
+        "use_regime": True,
+        "use_bull_bear": True,
+        "buy_logic": "2of3",  # OR 조건 (완화)
+    },
+}
+
+def run_backtest(df, score_thr=40, use_stoch=True, trailing_stop=False, trail_pct=0.10,
+                 use_regime=True, use_bull_bear=True, buy_logic="2of3"):
     """
-    우리 전략 백테스트 (개선판)
+    통합 백테스트 엔진
 
-    파라미터:
-    - score_thr   : AI 점수 진입 기준 (기본 45%, 낮출수록 거래 많아짐)
-    - use_stoch   : StochRSI 필터 사용 여부 (False면 조건 제거 → 거래 늘어남)
-    - trailing_stop: 트레일링 스탑 사용 여부
-    - trail_pct   : 최고점 대비 하락폭 (기본 10%)
-
-    분할매수: BUY1 30% → BUY2 35% → BUY3 35%
-    청산: 고정 익절 or 트레일링 스탑 선택
+    buy_logic:
+      "3of3" — MA60 AND StochRSI AND 점수 (엄격)
+      "2of3" — 3개 중 2개 이상 (완화)
     """
     trades = []
     capital = 1.0
@@ -570,11 +612,21 @@ def run_backtest(df, score_thr=45, use_stoch=True, trailing_stop=False, trail_pc
         stoch_ok  = float(stoch) < cfg["stoch"]
         no_down   = regime != "DOWNtrend"
 
-        # ── BUY1 진입 ─────────────────────────────────
-        # use_stoch=False면 StochRSI 조건 무시
-        stoch_pass = stoch_ok if use_stoch else True
-        score_pass = float(pct) >= score_thr
-        if stage == 0 and trend_ok and stoch_pass and score_pass and no_down:
+        # ── BUY1 진입 조건 판단 ──────────────────────────
+        cond_ma60    = trend_ok                          # ① MA60 위
+        cond_stoch   = stoch_ok if use_stoch else True   # ② StochRSI
+        cond_score   = float(pct) >= score_thr           # ③ AI 점수
+        cond_regime  = no_down if use_regime else True   # 레짐 필터
+
+        if buy_logic == "2of3":
+            # 완화: 3개 중 2개 이상
+            cond_count = int(cond_ma60) + int(cond_stoch) + int(cond_score)
+            buy1_ok = cond_count >= 2 and cond_regime
+        else:
+            # 엄격: 3개 전부
+            buy1_ok = cond_ma60 and cond_stoch and cond_score and cond_regime
+
+        if stage == 0 and buy1_ok:
             if p <= fib_prices[0]:
                 stage = 1
                 ep = [p]; ew = [0.30]
@@ -592,13 +644,13 @@ def run_backtest(df, score_thr=45, use_stoch=True, trailing_stop=False, trail_pc
                 })
 
         # ── BUY2 추가 ─────────────────────────────────
-        # 불타기 판단 모델 (BUY1 이후 매 봉마다 계산)
-        elif stage == 1 and no_down:
+        elif stage == 1 and (no_down if use_regime else True):
             macd_ok    = int(row.get("MACD_rising",    0)) == 1
             higher_low = int(row.get("HigherLow",      0)) == 1
             stoch_esc  = int(row.get("StochRSI_escape",0)) == 1
             bull_score = int(row.get("BullAdd_score",  0))
-            is_bull    = bull_score >= 2
+            # use_bull_bear=False면 불타기 비활성화
+            is_bull    = (bull_score >= 2) if use_bull_bear else False
             # 물타기: 피보나치 BUY2 구간 도달
             if p <= fib_prices[1]:
                 mode = "물타기"
@@ -629,12 +681,12 @@ def run_backtest(df, score_thr=45, use_stoch=True, trailing_stop=False, trail_pc
                 })
 
         # ── BUY3 추가 ─────────────────────────────────
-        elif stage == 2 and no_down:
+        elif stage == 2 and (no_down if use_regime else True):
             macd_ok    = int(row.get("MACD_rising",    0)) == 1
             higher_low = int(row.get("HigherLow",      0)) == 1
             stoch_esc  = int(row.get("StochRSI_escape",0)) == 1
             bull_score = int(row.get("BullAdd_score",  0))
-            is_bull    = bull_score >= 2
+            is_bull    = (bull_score >= 2) if use_bull_bear else False
             # 물타기: 피보나치 BUY3 구간 도달
             if p <= fib_prices[2]:
                 mode = "물타기"
@@ -923,27 +975,34 @@ with st.sidebar:
     if menu=="🔍 종목 분석":
         analyze_btn=st.button("🔍 분석하기",use_container_width=True,type="primary")
     if menu=="📊 백테스트":
-        st.markdown("**⚙️ 백테스트 파라미터**")
+        st.markdown("**📋 전략 단계 선택**")
+        bt_version = st.radio("",
+            ["V1 — 기본 피보나치",
+             "V2 — 레짐 필터 추가",
+             "V3 — AI 점수 필터 추가",
+             "V4 — 물타기/불타기 (현재 전략)",
+             "V5 — 조건 완화 (권장)"],
+            index=4,
+            label_visibility="collapsed",
+            help="단계별로 어떤 필터가 효과 있는지 비교"
+        )
+        st.markdown("---")
+        st.markdown("**⚙️ 세부 파라미터**")
         bt_score_thr = st.slider(
-            "AI 점수 진입 기준 (%)",
-            min_value=30, max_value=70, value=45, step=5,
-            help="낮을수록 거래 많아짐, 높을수록 신중한 진입")
-        bt_use_stoch = st.toggle(
-            "StochRSI 필터 사용",
-            value=True,
-            help="OFF하면 과매도 조건 무시 → 거래 횟수 증가")
+            "AI 점수 기준 (%)", 25, 65, 40, 5,
+            help="낮을수록 거래 많아짐")
         bt_trailing = st.toggle(
-            "트레일링 스탑 사용",
+            "트레일링 스탑",
             value=False,
-            help="ON하면 최고점 대비 하락 시 청산 (고정 익절 대신)")
+            help="ON: 최고점 대비 하락 시 청산")
         if bt_trailing:
             bt_trail_pct = st.slider(
-                "트레일링 스탑 폭 (%)",
-                min_value=5, max_value=20, value=10, step=1) / 100
+                "트레일링 폭 (%)", 5, 20, 10, 1) / 100
         else:
             bt_trail_pct = 0.10
         st.markdown("---")
-        bt_btn=st.button("🧪 백테스트 실행",use_container_width=True,type="primary")
+        bt_btn=st.button("🧪 백테스트 실행",
+            use_container_width=True, type="primary")
     st.markdown("---")
     st.markdown('<div class="warn">⚠️ 참고용 분석입니다.<br>투자 손익은 본인 책임입니다.</div>',
                 unsafe_allow_html=True)
@@ -2025,43 +2084,64 @@ elif menu=="📊 백테스트" and bt_btn:
             st.error("데이터를 가져올 수 없습니다. 티커를 확인하세요.")
             st.stop()
 
-    with st.spinner(f"🧪 {ticker_input} 백테스트 계산 중..."):
+    # 선택된 버전 파라미터 로드
+    ver_cfg = BT_VERSIONS[bt_version]
+    # 세부 파라미터로 덮어쓰기 (슬라이더 값 우선)
+    with st.spinner(f"🧪 {ticker_input} [{bt_version}] 백테스트 계산 중..."):
         trades, metrics = run_backtest(
             res["df"],
-            score_thr    = bt_score_thr,
-            use_stoch    = bt_use_stoch,
+            score_thr    = bt_score_thr,          # 슬라이더 값
+            use_stoch    = ver_cfg["use_stoch"],
+            use_regime   = ver_cfg["use_regime"],
+            use_bull_bear= ver_cfg["use_bull_bear"],
+            buy_logic    = ver_cfg["buy_logic"],
             trailing_stop= bt_trailing,
             trail_pct    = bt_trail_pct,
         )
 
     st.markdown(f"### 📊 {ticker_input} 백테스트 결과 ({period_input})")
 
-    # 사용된 파라미터 요약 표시
-    param_cols = st.columns(4)
-    param_cols[0].markdown(f"""<div class="mc"><div class="mc-lbl">AI 점수 기준</div>
+    # 버전 설명 배너
+    ver_cfg = BT_VERSIONS[bt_version]
+    st.markdown(f"""
+    <div style="background:#0f172a;border:1.5px solid #00d4ff;
+                border-radius:10px;padding:14px 16px;margin-bottom:12px">
+      <div style="color:#00d4ff;font-weight:700;margin-bottom:6px">
+        📋 {bt_version}
+      </div>
+      <div style="color:#9ca3af;font-size:.82rem">{ver_cfg["desc"]}</div>
+    </div>""", unsafe_allow_html=True)
+
+    # 파라미터 카드
+    param_cols = st.columns(5)
+    param_cols[0].markdown(f"""<div class="mc"><div class="mc-lbl">진입 방식</div>
+    <div class="mc-val" style="color:#00d4ff">
+    {"2/3 완화" if ver_cfg["buy_logic"]=="2of3" else "3/3 엄격"}</div></div>""",
+    unsafe_allow_html=True)
+    param_cols[1].markdown(f"""<div class="mc"><div class="mc-lbl">AI 점수 기준</div>
     <div class="mc-val" style="color:#00d4ff">{bt_score_thr}%</div></div>""",
     unsafe_allow_html=True)
-    param_cols[1].markdown(f"""<div class="mc"><div class="mc-lbl">StochRSI 필터</div>
-    <div class="mc-val" style="color:{'#00ff9d' if bt_use_stoch else '#ffd700'}">
-    {'ON' if bt_use_stoch else 'OFF'}</div></div>""", unsafe_allow_html=True)
-    param_cols[2].markdown(f"""<div class="mc"><div class="mc-lbl">익절 방식</div>
+    param_cols[2].markdown(f"""<div class="mc"><div class="mc-lbl">레짐 필터</div>
+    <div class="mc-val" style="color:{'#00ff9d' if ver_cfg['use_regime'] else '#ffd700'}">
+    {"ON" if ver_cfg["use_regime"] else "OFF"}</div></div>""", unsafe_allow_html=True)
+    param_cols[3].markdown(f"""<div class="mc"><div class="mc-lbl">물타기/불타기</div>
+    <div class="mc-val" style="color:{'#00ff9d' if ver_cfg['use_bull_bear'] else '#ffd700'}">
+    {"ON" if ver_cfg["use_bull_bear"] else "OFF"}</div></div>""", unsafe_allow_html=True)
+    param_cols[4].markdown(f"""<div class="mc"><div class="mc-lbl">익절 방식</div>
     <div class="mc-val" style="color:#e8eaf6">
-    {'트레일링' if bt_trailing else '고정'}</div></div>""", unsafe_allow_html=True)
-    param_cols[3].markdown(f"""<div class="mc"><div class="mc-lbl">트레일링 폭</div>
-    <div class="mc-val" style="color:#e8eaf6">
-    {f'-{bt_trail_pct*100:.0f}%' if bt_trailing else 'N/A'}</div></div>""",
-    unsafe_allow_html=True)
+    {"트레일링" if bt_trailing else "고정"}</div></div>""", unsafe_allow_html=True)
     st.markdown("---")
 
     # 거래 없을 때 힌트 제공
     if not metrics:
-        st.warning("거래 없음 — 아래 방법을 시도해보세요:")
+        st.warning(f"⚠️ [{bt_version}] 거래 없음")
+        if "V4" in bt_version or "V3" in bt_version:
+            st.info("💡 조건이 너무 엄격합니다. **V5 — 조건 완화** 버전을 시도해보세요!")
         st.markdown("""
-        | 조정 방법 | 효과 |
-        |-----------|------|
-        | AI 점수 기준 낮추기 (45→35) | 진입 횟수 증가 |
-        | StochRSI 필터 OFF | 진입 조건 완화 |
-        | 기간 2y~3y로 변경 | 거래 기회 증가 |
+        **시도해볼 방법:**
+        - 왼쪽에서 **V5 — 조건 완화** 선택
+        - AI 점수 기준을 **35%** 이하로 낮추기
+        - 기간을 **2y~3y**로 변경 (거래 기회 증가)
         """)
         st.stop()
 
@@ -2280,6 +2360,7 @@ elif menu=="📊 백테스트" and bt_btn:
 종목: {ticker_input}
 분석일: {datetime.datetime.now().strftime("%Y-%m-%d")}
 기간: {period_input} (실제 2년 데이터 사용)
+전략 버전: {bt_version}
 레짐: {res["regime"]} ({res["cfg"]["desc"]})
 
 --- 현재 매매 플랜 ---
