@@ -514,20 +514,24 @@ STRATEGY_DESC = {
     "regime_params": REGIME_PARAMS,
 }
 
-def run_backtest(df):
+def run_backtest(df, score_thr=45, use_stoch=True, trailing_stop=False, trail_pct=0.10):
     """
-    우리 전략 그대로 백테스트:
-    - 레짐별 피보나치 구간에서 분할매수 (BUY1/2/3)
-    - 레짐별 비중 (30% / 34% / 33%)
-    - 레짐별 손절/익절
-    - 가중평균단가 기반 손절/익절 계산
+    우리 전략 백테스트 (개선판)
+
+    파라미터:
+    - score_thr   : AI 점수 진입 기준 (기본 45%, 낮출수록 거래 많아짐)
+    - use_stoch   : StochRSI 필터 사용 여부 (False면 조건 제거 → 거래 늘어남)
+    - trailing_stop: 트레일링 스탑 사용 여부
+    - trail_pct   : 최고점 대비 하락폭 (기본 10%)
+
+    분할매수: BUY1 30% → BUY2 35% → BUY3 35%
+    청산: 고정 익절 or 트레일링 스탑 선택
     """
     trades = []
     capital = 1.0
-    # 포지션 상태
-    stage = 0          # 0=없음 1=BUY1진입 2=BUY2추가 3=BUY3추가
-    ep = []            # 진입가 리스트
-    ew = []            # 진입 비중 리스트
+    stage = 0
+    ep = []
+    ew = []
     regime_entry = "UNKNOWN"
     loss_streak = 0
     cooldown = 0
@@ -564,11 +568,13 @@ def run_backtest(df):
         # 기본 진입 조건
         trend_ok  = p > float(ma60)
         stoch_ok  = float(stoch) < cfg["stoch"]
-        score_ok  = float(pct) >= 50
         no_down   = regime != "DOWNtrend"
 
         # ── BUY1 진입 ─────────────────────────────────
-        if stage == 0 and trend_ok and stoch_ok and score_ok and no_down:
+        # use_stoch=False면 StochRSI 조건 무시
+        stoch_pass = stoch_ok if use_stoch else True
+        score_pass = float(pct) >= score_thr
+        if stage == 0 and trend_ok and stoch_pass and score_pass and no_down:
             if p <= fib_prices[0]:
                 stage = 1
                 ep = [p]; ew = [0.30]
@@ -719,11 +725,19 @@ def run_backtest(df):
     mdd    = float(((equity - peak) / peak).min() * 100)
     wr     = len(wins) / len(pnls) * 100
 
-    dates  = pd.to_datetime([t["날짜"] for t in sells])
-    n_years = max((dates[-1] - dates[0]).days / 365.25, 0.1)
-    cagr    = (equity[-1] ** (1 / n_years) - 1) * 100
-    sharpe  = float(np.mean(pnls) / np.std(pnls) * np.sqrt(252)) if np.std(pnls) > 0 else 0
-    calmar  = cagr / abs(mdd) if mdd != 0 else 0
+    # CAGR: 첫 BUY1 진입일 ~ 마지막 청산일 기준
+    buy1_dates = pd.to_datetime([t["날짜"] for t in trades if t["구분"]=="BUY1"])
+    sell_dates = pd.to_datetime([t["날짜"] for t in sells])
+    if len(buy1_dates) > 0 and len(sell_dates) > 0:
+        start_d = buy1_dates[0]
+        end_d   = sell_dates[-1]
+        n_years = max((end_d - start_d).days / 365.25, 0.08)
+    else:
+        n_years = 0.5
+    cagr   = (equity[-1] ** (1 / n_years) - 1) * 100
+    # Sharpe: 거래 수익률 기반 (거래당 수익률)
+    sharpe = float(np.mean(pnls) / np.std(pnls) * np.sqrt(len(pnls))) if np.std(pnls) > 0 else 0
+    calmar = cagr / abs(mdd) if mdd != 0 else 0
 
     # BUY 단계별 통계
     b1_trades = [t for t in trades if t["구분"] == "BUY1"]
@@ -909,6 +923,26 @@ with st.sidebar:
     if menu=="🔍 종목 분석":
         analyze_btn=st.button("🔍 분석하기",use_container_width=True,type="primary")
     if menu=="📊 백테스트":
+        st.markdown("**⚙️ 백테스트 파라미터**")
+        bt_score_thr = st.slider(
+            "AI 점수 진입 기준 (%)",
+            min_value=30, max_value=70, value=45, step=5,
+            help="낮을수록 거래 많아짐, 높을수록 신중한 진입")
+        bt_use_stoch = st.toggle(
+            "StochRSI 필터 사용",
+            value=True,
+            help="OFF하면 과매도 조건 무시 → 거래 횟수 증가")
+        bt_trailing = st.toggle(
+            "트레일링 스탑 사용",
+            value=False,
+            help="ON하면 최고점 대비 하락 시 청산 (고정 익절 대신)")
+        if bt_trailing:
+            bt_trail_pct = st.slider(
+                "트레일링 스탑 폭 (%)",
+                min_value=5, max_value=20, value=10, step=1) / 100
+        else:
+            bt_trail_pct = 0.10
+        st.markdown("---")
         bt_btn=st.button("🧪 백테스트 실행",use_container_width=True,type="primary")
     st.markdown("---")
     st.markdown('<div class="warn">⚠️ 참고용 분석입니다.<br>투자 손익은 본인 책임입니다.</div>',
@@ -1992,9 +2026,44 @@ elif menu=="📊 백테스트" and bt_btn:
             st.stop()
 
     with st.spinner(f"🧪 {ticker_input} 백테스트 계산 중..."):
-        trades, metrics = run_backtest(res["df"])
+        trades, metrics = run_backtest(
+            res["df"],
+            score_thr    = bt_score_thr,
+            use_stoch    = bt_use_stoch,
+            trailing_stop= bt_trailing,
+            trail_pct    = bt_trail_pct,
+        )
 
     st.markdown(f"### 📊 {ticker_input} 백테스트 결과 ({period_input})")
+
+    # 사용된 파라미터 요약 표시
+    param_cols = st.columns(4)
+    param_cols[0].markdown(f"""<div class="mc"><div class="mc-lbl">AI 점수 기준</div>
+    <div class="mc-val" style="color:#00d4ff">{bt_score_thr}%</div></div>""",
+    unsafe_allow_html=True)
+    param_cols[1].markdown(f"""<div class="mc"><div class="mc-lbl">StochRSI 필터</div>
+    <div class="mc-val" style="color:{'#00ff9d' if bt_use_stoch else '#ffd700'}">
+    {'ON' if bt_use_stoch else 'OFF'}</div></div>""", unsafe_allow_html=True)
+    param_cols[2].markdown(f"""<div class="mc"><div class="mc-lbl">익절 방식</div>
+    <div class="mc-val" style="color:#e8eaf6">
+    {'트레일링' if bt_trailing else '고정'}</div></div>""", unsafe_allow_html=True)
+    param_cols[3].markdown(f"""<div class="mc"><div class="mc-lbl">트레일링 폭</div>
+    <div class="mc-val" style="color:#e8eaf6">
+    {f'-{bt_trail_pct*100:.0f}%' if bt_trailing else 'N/A'}</div></div>""",
+    unsafe_allow_html=True)
+    st.markdown("---")
+
+    # 거래 없을 때 힌트 제공
+    if not metrics:
+        st.warning("거래 없음 — 아래 방법을 시도해보세요:")
+        st.markdown("""
+        | 조정 방법 | 효과 |
+        |-----------|------|
+        | AI 점수 기준 낮추기 (45→35) | 진입 횟수 증가 |
+        | StochRSI 필터 OFF | 진입 조건 완화 |
+        | 기간 2y~3y로 변경 | 거래 기회 증가 |
+        """)
+        st.stop()
 
     # ── 전략 설명 ──────────────────────────────────────────
     with st.expander("📖 이 백테스트가 사용하는 전략 설명 (클릭해서 보기)", expanded=False):
@@ -2250,6 +2319,12 @@ Fib구간:    {res["cfg"]["fib"]}
 손절폭:     -{res["cfg"]["stop"]*100:.0f}%
 익절폭:     +{res["cfg"]["tp"]*100:.0f}%
 StochRSI:   {res["cfg"]["stoch"]} 이하
+
+--- 백테스트 설정 ---
+AI 점수 기준:   {bt_score_thr}%
+StochRSI 필터: {"ON" if bt_use_stoch else "OFF"}
+익절 방식:      {"트레일링" if bt_trailing else "고정"}
+트레일링 폭:    {f"-{bt_trail_pct*100:.0f}%" if bt_trailing else "N/A"}
 ============================="""
 
         # ── 복사용 텍스트 영역 ──────────────────────────────
