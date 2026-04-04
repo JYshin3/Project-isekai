@@ -977,7 +977,9 @@ if menu=="🏠 홈 대시보드":
 # 🔍 종목 분석
 # ════════════════════════════════════════════════════════════
 elif menu=="🔍 종목 분석" and analyze_btn:
-    with st.spinner(f"{ticker_input} 분석 중..."):
+    # ✅ 분석 버튼 클릭 시 항상 최신 데이터로 새로 분석
+    with st.spinner(f"📡 {ticker_input} 최신 데이터 받는 중..."):
+        analyze.clear()
         res=analyze(ticker_input,period_input)
     if res is None:
         st.error("데이터를 가져올 수 없습니다. 티커를 확인하세요."); st.stop()
@@ -1978,9 +1980,18 @@ elif menu=="🤖 AI 종목 추천" and scan_btn:
 # 📊 백테스트
 # ════════════════════════════════════════════════════════════
 elif menu=="📊 백테스트" and bt_btn:
-    with st.spinner(f"{ticker_input} 백테스트 중... (MA200 안정화 필요로 2y 권장)"):
+    # ✅ 백테스트는 캐시 없이 항상 새로 계산
+    # 캐시된 analyze()를 우회해서 직접 데이터 다운로드
+    with st.spinner(f"📡 {ticker_input} 데이터 새로 받는 중..."):
+        # analyze 캐시 강제 초기화
+        analyze.clear()
+        scan_single.clear()
         res = analyze(ticker_input, period_input)
-        if res is None: st.error("데이터 오류"); st.stop()
+        if res is None:
+            st.error("데이터를 가져올 수 없습니다. 티커를 확인하세요.")
+            st.stop()
+
+    with st.spinner(f"🧪 {ticker_input} 백테스트 계산 중..."):
         trades, metrics = run_backtest(res["df"])
 
     st.markdown(f"### 📊 {ticker_input} 백테스트 결과 ({period_input})")
