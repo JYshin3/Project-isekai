@@ -2241,13 +2241,66 @@ Fib구간:    {res["cfg"]["fib"]}
 StochRSI:   {res["cfg"]["stoch"]} 이하
 ============================="""
 
-        st.text_area(
-            "아래 내용을 전체 선택(Ctrl+A) 후 복사해서 Claude에게 붙여넣으세요",
-            value=copy_text,
-            height=420,
-            key="copy_area"
-        )
-        st.caption("💡 팁: 텍스트 박스 클릭 → Ctrl+A (전체선택) → Ctrl+C (복사)")
+        # ── 복사 버튼 (JavaScript clipboard API) ──
+        # 핸드폰에서도 버튼 한 번으로 복사 가능
+        import json
+        safe_text = json.dumps(copy_text)  # JS 문자열로 안전하게 변환
+        st.markdown(f"""
+        <div style="margin-bottom:12px">
+          <button onclick="
+            var txt = {safe_text};
+            if (navigator.clipboard && navigator.clipboard.writeText) {{
+              navigator.clipboard.writeText(txt).then(function() {{
+                var btn = document.getElementById('copy-btn');
+                btn.innerHTML = '✅ 복사 완료!';
+                btn.style.background = 'rgba(0,255,157,0.15)';
+                btn.style.borderColor = '#00ff9d';
+                btn.style.color = '#00ff9d';
+                setTimeout(function() {{
+                  btn.innerHTML = '📋 결과 전체 복사 (Claude에 붙여넣기용)';
+                  btn.style.background = 'rgba(0,212,255,0.1)';
+                  btn.style.borderColor = '#00d4ff';
+                  btn.style.color = '#00d4ff';
+                }}, 2500);
+              }}).catch(function() {{
+                var ta = document.getElementById('fallback-ta');
+                ta.style.display = 'block';
+                ta.select();
+                document.execCommand('copy');
+              }});
+            }} else {{
+              var ta = document.getElementById('fallback-ta');
+              ta.style.display = 'block';
+              ta.select();
+              document.execCommand('copy');
+            }}
+          "
+          id="copy-btn"
+          style="width:100%;padding:14px;
+                 background:rgba(0,212,255,0.1);
+                 border:1.5px solid #00d4ff;
+                 border-radius:10px;
+                 color:#00d4ff;
+                 font-size:1rem;font-weight:700;
+                 cursor:pointer;
+                 font-family:inherit;">
+            📋 결과 전체 복사 (Claude에 붙여넣기용)
+          </button>
+          <textarea id="fallback-ta"
+            style="display:none;width:100%;height:60px;
+                   background:#111827;color:#e8eaf6;
+                   border:1px solid #1e2d4a;border-radius:8px;
+                   padding:8px;font-size:.8rem;margin-top:8px;"
+          >{copy_text}</textarea>
+        </div>
+        <div style="color:#6b7280;font-size:.74rem;text-align:center;margin-bottom:8px">
+          버튼 클릭 → 자동 복사 → Claude 대화창에 붙여넣기 (Ctrl+V / 길게 누르기)
+        </div>
+        """, unsafe_allow_html=True)
+
+        # 접힌 미리보기 (내용 확인용)
+        with st.expander("📄 복사 내용 미리보기"):
+            st.code(copy_text, language=None)
 
         st.markdown("")
         now_str = datetime.datetime.now().strftime("%Y%m%d_%H%M")
