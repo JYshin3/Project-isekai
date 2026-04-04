@@ -76,14 +76,32 @@ REGIME_PARAMS = {
     "UNKNOWN":   {"fib":[0.500,0.618,0.786],"stoch":20,"stop":0.07,"tp":0.25,"desc":"❓ 불명"},
 }
 
-# 미국 대형주 추천 풀 (자동 스캔용)
-DEFAULT_WATCHLIST = [
-    "AAPL","MSFT","NVDA","AMZN","GOOGL","META","TSLA","AMD","AVGO","ORCL",
-    "CRM","NFLX","ADBE","QCOM","INTC","MU","NOW","SNPS","KLAC","AMAT",
-    "JPM","GS","BAC","V","MA","BRK-B","UNH","LLY","JNJ","PFE",
-    "XOM","CVX","COP","EOG","SLB","NEE","DUK","SO","D","AEP",
-    "SPY","QQQ","IWM","DIA","VRT","PLTR","SMCI","ARM","MRVL","CRWD"
-]
+# ════════════════════════════════════════════════════════
+# 자동 스캔 종목 풀 (섹터별 분류)
+# ════════════════════════════════════════════════════════
+SCAN_UNIVERSE = {
+    "테크/반도체": ["AAPL","MSFT","NVDA","AMD","AVGO","QCOM","INTC","MU",
+                   "AMAT","KLAC","SNPS","CDNS","ADI","MRVL","ARM","SMCI"],
+    "소프트웨어":  ["GOOGL","META","CRM","ADBE","NOW","ORCL","INTU","WDAY",
+                   "PANW","CRWD","FTNT","ZS","DDOG","SNOW","PLTR"],
+    "소비자/미디어":["AMZN","TSLA","NFLX","DIS","SBUX","NKE","MCD","TGT",
+                    "COST","HD","LOW","BKNG","MAR","HLT"],
+    "금융":        ["JPM","GS","BAC","MS","BLK","V","MA","AXP",
+                   "C","WFC","SCHW","ICE","CME","BRK-B"],
+    "헬스케어":    ["UNH","LLY","JNJ","PFE","ABBV","MRK","BMY","AMGN",
+                   "GILD","ISRG","ELV","CVS","CI"],
+    "에너지":      ["XOM","CVX","COP","EOG","SLB","MPC","PSX","VLO",
+                   "OXY","PXD","FANG","HES"],
+    "ETF":         ["SPY","QQQ","IWM","DIA","XLK","XLF","XLE","XLV",
+                   "XLI","GLD","TLT","HYG"],
+    "기타 성장주": ["VRT","PLTR","ARM","APP","UBER","ABNB","COIN","RBLX",
+                   "SHOP","SQ","PYPL","AFRM"],
+}
+# 전체 풀 (중복 제거)
+ALL_TICKERS = list(dict.fromkeys(
+    t for tks in SCAN_UNIVERSE.values() for t in tks
+))
+DEFAULT_WATCHLIST = ALL_TICKERS[:20]  # 사이드바 기본값용
 
 # ════════════════════════════════════════════════════════════
 # 지표 계산
@@ -249,6 +267,130 @@ def build_features(df):
 # ════════════════════════════════════════════════════════════
 # 단일 종목 분석 (캐시)
 # ════════════════════════════════════════════════════════════
+@st.cache_data(ttl=600)
+def scan_single(ticker):
+    """
+    자동 스캔용 경량 분석 함수
+    피보나치 구간 진입 여부 + 핵심 지표만 빠르게 계산
+    """
+    try:
+        df = yf.download(ticker, period="2y", interval="1d",
+                         auto_adjust=True, progress=False)
+        if df.empty or len(df) < 200: return None
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        df = df.dropna(subset=["Close","High","Low","Open","Volume"]).reset_index()
+        if "Datetime" in df.columns:
+            df.rename(columns={"Datetime":"Date"}, inplace=True)
+        df = build_features(df)
+
+        valid = df.dropna(subset=["TotalScore","StochRSI","MA60","ADX","Regime"])
+        if valid.empty: return None
+        row = valid.iloc[-1]
+
+        price  = float(row["Close"])
+        regime = row["Regime"]
+        if regime == "UNKNOWN": return None  # 데이터 부족 종목 제외
+
+        cfg = REGIME_PARAMS[regime]
+        pct = float(row["ScorePct"])
+
+        # 피보나치 계산
+        sh30  = float(row["sw_high"]) if not pd.isna(row["sw_high"]) else None
+        sl30  = float(row["sw_low"])  if not pd.isna(row["sw_low"])  else None
+        rng30 = float(row["rng"])     if not pd.isna(row["rng"])     else None
+        fib_valid = bool(row.get("fib_valid", False))
+
+        # 스윙 선택
+        if fib_valid and sh30 and rng30 > 0:
+            use_sh, use_rng = sh30, rng30
+        else:
+            sh60  = float(df["High"].rolling(60).max().iloc[-1])
+            rng60 = sh60 - float(df["Low"].rolling(60).min().iloc[-1])
+            if rng60 > 0 and sh60 > price:
+                use_sh, use_rng = sh60, rng60
+            else:
+                # 120일 시도
+                sh120  = float(df["High"].rolling(120).max().iloc[-1])
+                rng120 = sh120 - float(df["Low"].rolling(120).min().iloc[-1])
+                if rng120 > 0 and sh120 > price:
+                    use_sh, use_rng = sh120, rng120
+                else:
+                    return None  # 모든 스윙에서 계산 불가 → 스캔 제외
+
+        fib_lv_raw = [use_sh - use_rng*f for f in cfg["fib"]]
+        fib_lv     = [f if f < price else None for f in fib_lv_raw]
+
+        # 핵심 필터: 피보나치 구간에 근접한 종목만
+        # 유효한 레벨이 하나도 없으면 제외
+        valid_fibs = [f for f in fib_lv if f is not None]
+        if not valid_fibs: return None
+
+        # 가장 가까운 피보나치 레벨까지 거리
+        nearest_fib = max(valid_fibs)  # 현재가와 가장 가까운 BUY 레벨
+        dist_pct    = (nearest_fib / price - 1) * 100  # 음수 = 아직 도달 안 함
+
+        # 피보나치 근접도 점수 (가까울수록 높음)
+        # dist_pct: -20% ~ 0%  →  fib_score: 0 ~ 100
+        fib_score = max(0, min(100, 100 + dist_pct * 5))
+
+        # 불타기/물타기 판단
+        bull_score = int(row.get("BullAdd_score", 0))
+        is_bull    = bull_score >= 2
+
+        # 매수 여부 판단
+        near = abs(dist_pct) <= 5  # ±5% 이내 = 근접
+        if regime == "DOWNtrend":
+            signal = "❌ 하락장"
+        elif near and pct >= 50:
+            signal = "🟢 매수 근접"
+        elif dist_pct > -10 and pct >= 45:
+            signal = "🟡 대기 중"
+        else:
+            signal = "⏳ 원거리"
+
+        # 평균단가 시나리오
+        avg_s  = sum(fib_lv[i]*[0.30,0.35,0.35][i]
+                     for i in range(3) if fib_lv[i]) /                  sum([0.30,0.35,0.35][i]
+                     for i in range(3) if fib_lv[i])                   if valid_fibs else None
+        stop_s = avg_s * (1 - cfg["stop"]) if avg_s else None
+        tp_s   = avg_s * (1 + cfg["tp"])   if avg_s else None
+
+        # 1주/1개월 수익률
+        ret_1w = float((df["Close"].iloc[-1]/df["Close"].iloc[-6]-1)*100)  if len(df)>=6  else 0
+        ret_1m = float((df["Close"].iloc[-1]/df["Close"].iloc[-22]-1)*100) if len(df)>=22 else 0
+
+        return {
+            "ticker":   ticker,
+            "price":    price,
+            "regime":   regime,
+            "regime_desc": cfg["desc"],
+            "pct":      pct,
+            "signal":   signal,
+            "fib_lv":   fib_lv,
+            "nearest_fib": nearest_fib,
+            "dist_pct": dist_pct,
+            "fib_score": fib_score,
+            "avg_s":    avg_s,
+            "stop_s":   stop_s,
+            "tp_s":     tp_s,
+            "bull_score": bull_score,
+            "is_bull":  is_bull,
+            "ts":  int(row["TrendScore"]),
+            "cs":  int(row["CycleScore"]),
+            "ss":  int(row["SeasonalScore"]),
+            "irs": int(row["IrregularScore"]),
+            "stoch": float(row["StochRSI"]),
+            "adx":   float(row["ADX"]),
+            "ret_1w": ret_1w,
+            "ret_1m": ret_1m,
+            # 종합 추천 점수: AI점수 50% + 피보근접도 30% + 불타기보너스 20%
+            "total_rec_score": pct*0.5 + fib_score*0.3 + bull_score/3*20*0.2,
+        }
+    except Exception:
+        return None
+
+
 @st.cache_data(ttl=300)
 def analyze(ticker, period="1y"):
     try:
@@ -747,10 +889,23 @@ with st.sidebar:
             placeholder="예: AAPL, TSLA, NVDA").upper().strip()
         period_input=st.selectbox("기간",["6mo","1y","2y","3y"],index=1)
     if menu=="🤖 AI 종목 추천":
-        custom_list=st.text_area("스캔 종목 목록",
-            value="\n".join(DEFAULT_WATCHLIST[:20]),height=200)
-        scan_period=st.selectbox("기간",["6mo","1y"],index=1)
-        scan_btn=st.button("🚀 AI 스캔 시작",use_container_width=True,type="primary")
+        st.markdown("**스캔 방식 선택**")
+        scan_mode = st.radio("",
+            ["🌐 전체 자동 스캔 (추천)", "✏️ 직접 종목 입력"],
+            label_visibility="collapsed")
+        if scan_mode == "✏️ 직접 종목 입력":
+            custom_list = st.text_area("종목 목록 (줄바꿈)",
+                value="\n".join(DEFAULT_WATCHLIST[:20]), height=150)
+        else:
+            custom_list = None
+            st.markdown("**섹터 선택** (비워두면 전체)")
+            selected_sectors = st.multiselect("",
+                list(SCAN_UNIVERSE.keys()),
+                default=[],
+                label_visibility="collapsed")
+        top_n = st.slider("TOP 추천 개수", 5, 20, 10)
+        scan_btn = st.button("🚀 AI 자동 스캔 시작",
+                             use_container_width=True, type="primary")
     if menu=="🔍 종목 분석":
         analyze_btn=st.button("🔍 분석하기",use_container_width=True,type="primary")
     if menu=="📊 백테스트":
@@ -1620,112 +1775,204 @@ elif menu=="🔍 종목 분석" and analyze_btn:
     </div>""", unsafe_allow_html=True)
 
 # ════════════════════════════════════════════════════════════
-# 🤖 AI 종목 추천
+# 🤖 AI 자동 스캔
 # ════════════════════════════════════════════════════════════
 elif menu=="🤖 AI 종목 추천" and scan_btn:
-    tickers=[t.strip().upper() for t in custom_list.split("\n") if t.strip()]
+
+    # 스캔할 종목 목록 결정
+    if scan_mode == "✏️ 직접 종목 입력":
+        tickers = [t.strip().upper() for t in custom_list.split("\n") if t.strip()]
+    else:
+        # 자동: 섹터 선택 또는 전체
+        if selected_sectors:
+            tickers = list(dict.fromkeys(
+                t for s in selected_sectors for t in SCAN_UNIVERSE[s]
+            ))
+        else:
+            tickers = ALL_TICKERS
     if not tickers: st.error("종목을 입력하세요."); st.stop()
 
-    st.markdown(f"### 🤖 AI 종목 추천 — {len(tickers)}개 스캔 중")
-    prog=st.progress(0); results=[]
+    st.markdown(f"### 🤖 AI 자동 스캔 — {len(tickers)}개 종목 분석 중")
+    st.caption("피보나치 BUY 구간에 근접한 종목을 자동으로 찾아 추천 점수순으로 정렬합니다.")
 
-    for i,tk in enumerate(tickers):
-        res=analyze(tk,scan_period)
-        if res: results.append(res)
-        prog.progress((i+1)/len(tickers))
+    # ── 스캔 실행 ──
+    prog_bar   = st.progress(0)
+    status_txt = st.empty()
+    scan_results = []
 
-    prog.empty()
-    results=sorted(results,key=lambda x:x["pct"],reverse=True)
+    for i, tk in enumerate(tickers):
+        status_txt.text(f"스캔 중: {tk} ({i+1}/{len(tickers)})")
+        r = scan_single(tk)
+        if r: scan_results.append(r)
+        prog_bar.progress((i+1)/len(tickers))
 
-    # ── 추천 요약 ──
-    strong_buys=[r for r in results if r["sig_k"]=="strong_buy"]
-    buys=[r for r in results if r["sig_k"]=="buy"]
-    sells=[r for r in results if r["sig_k"]=="sell"]
+    prog_bar.empty(); status_txt.empty()
 
-    c1,c2,c3,c4=st.columns(4)
-    mcard(c1,"🟢 강력 매수",f"{len(strong_buys)}개","#00ff9d")
-    mcard(c2,"🟢 매수",f"{len(buys)}개","#4ade80")
-    mcard(c3,"🔴 회피",f"{len(sells)}개","#ff4757")
-    mcard(c4,"분석 종목",f"{len(results)}개","#6b7280")
+    # ── 필터링 & 정렬 ──
+    # 1차: 하락장 제외
+    scan_results = [r for r in scan_results if r["regime"] != "DOWNtrend"]
+    # 2차: 추천 점수 기준 정렬
+    scan_results = sorted(scan_results,
+                          key=lambda x: x["total_rec_score"], reverse=True)
+    top_n_results = scan_results[:top_n]
+
+    if not scan_results:
+        st.warning("조건에 맞는 종목이 없습니다. 섹터를 늘리거나 다시 시도하세요.")
+        st.stop()
+
+    # ── 요약 카드 ──
+    near_list  = [r for r in scan_results if "매수 근접" in r["signal"]]
+    wait_list  = [r for r in scan_results if "대기" in r["signal"]]
+    bull_list  = [r for r in scan_results if r["is_bull"]]
+
+    s1,s2,s3,s4 = st.columns(4)
+    mcard(s1,"📡 스캔 완료",    f"{len(tickers)}개",   "#6b7280")
+    mcard(s2,"🟢 매수 근접",    f"{len(near_list)}개",  "#00ff9d",
+          "피보나치 ±5% 이내")
+    mcard(s3,"🟡 대기 중",      f"{len(wait_list)}개",  "#ffd700",
+          "조정 진행 중")
+    mcard(s4,"📈 불타기 신호",  f"{len(bull_list)}개",  "#00d4ff",
+          "상승 전환 감지")
     st.markdown("---")
 
-    # ── 전체 순위 표 ──
-    st.markdown("#### 📊 종목 순위 (AI 점수 높은 순)")
-    table_rows=[]
-    for i,res in enumerate(results):
-        sc={"strong_buy":"#00ff9d","buy":"#4ade80","watch":"#ffd700","hold":"#9ca3af","sell":"#ff4757"}
-        table_rows.append({
-            "순위":i+1,"종목":res["ticker"],
-            "현재가":f"${res['price']:.2f}",
-            "AI 점수":f"{res['pct']:.0f}%",
-            "TREND":f"{res['ts']}/4","CYCLE":f"{res['cs']}/4",
-            "SEASON":f"{res['ss']}/4","IRREG":f"{res['irs']}/4",
-            "장세":res["cfg"]["desc"],
-            "StochRSI":f"{res['stoch']:.1f}",
-            "신호":res["signal"],"행동":res["action"],
-            "1주":f"{res['ret_1w']:+.1f}%","1개월":f"{res['ret_1m']:+.1f}%",
+    # ── TOP N 순위 표 ──
+    st.markdown(f"#### 🏆 TOP {top_n} 추천 종목 — 종합 점수 순")
+    st.caption("추천 점수 = AI 점수(50%) + 피보나치 근접도(30%) + 불타기 신호(20%)")
+
+    rank_rows = []
+    for i, r in enumerate(top_n_results):
+        # BUY1 가격 및 거리
+        b1 = r["fib_lv"][0]
+        b1_str  = f"${b1:.2f}" if b1 else "대기"
+        dist_str= f"{r['dist_pct']:+.1f}%" if r["dist_pct"] else "-"
+        # 불타기 표시
+        bull_str = f"📈 {r['bull_score']}/3" if r["is_bull"] else f"📉 {r['bull_score']}/3"
+        rank_rows.append({
+            "순위":          i+1,
+            "종목":          r["ticker"],
+            "현재가":        f"${r['price']:.2f}",
+            "장세":          r["regime_desc"],
+            "신호":          r["signal"],
+            "BUY1 가격":     b1_str,
+            "BUY1까지":      dist_str,
+            "추가매수":      bull_str,
+            "AI 점수":       f"{r['pct']:.0f}%",
+            "추천 점수":     f"{r['total_rec_score']:.0f}점",
+            "StochRSI":      f"{r['stoch']:.1f}",
+            "1주":           f"{r['ret_1w']:+.1f}%",
+            "1개월":         f"{r['ret_1m']:+.1f}%",
         })
-    df_rank=pd.DataFrame(table_rows)
-    st.dataframe(df_rank,use_container_width=True,hide_index=True,
+
+    df_top = pd.DataFrame(rank_rows)
+    st.dataframe(df_top, use_container_width=True, hide_index=True,
         column_config={
-            "순위":st.column_config.NumberColumn(width="small"),
-            "종목":st.column_config.TextColumn(width="small"),
-            "현재가":st.column_config.TextColumn(width="small"),
-            "AI 점수":st.column_config.TextColumn(width="small"),
-            "신호":st.column_config.TextColumn(width="medium"),
-            "행동":st.column_config.TextColumn(width="small"),
+            "순위":      st.column_config.NumberColumn(width="small"),
+            "종목":      st.column_config.TextColumn(width="small"),
+            "현재가":    st.column_config.TextColumn(width="small"),
+            "장세":      st.column_config.TextColumn(width="small"),
+            "신호":      st.column_config.TextColumn(width="medium"),
+            "BUY1 가격": st.column_config.TextColumn(width="small"),
+            "BUY1까지":  st.column_config.TextColumn(width="small"),
+            "추가매수":  st.column_config.TextColumn(width="small"),
+            "AI 점수":   st.column_config.TextColumn(width="small"),
+            "추천 점수": st.column_config.TextColumn(width="small"),
         })
     st.markdown("---")
 
-    # ── TOP 5 강력 매수 종목 상세 ──
-    top5=[r for r in results if r["sig_k"] in ["strong_buy","buy"]][:5]
-    if top5:
-        st.markdown("#### 🏆 TOP 5 매수 후보 — 상세")
-        for res in top5:
-            with st.expander(f"  {res['ticker']}  |  ${res['price']:.2f}  |  {res['signal']}  |  점수 {res['pct']:.0f}%"):
-                col1,col2,col3=st.columns(3)
-                with col1:
-                    st.markdown("**매수 플랜**")
-                    plan={
-                        "구분":["1차 매수","2차 매수","3차 매수","손절선","익절 목표"],
-                        "가격":[
-                            f"${res['fib_lv'][0]:.2f}" if res['fib_lv'][0] else "N/A",
-                            f"${res['fib_lv'][1]:.2f}" if res['fib_lv'][1] else "N/A",
-                            f"${res['fib_lv'][2]:.2f}" if res['fib_lv'][2] else "N/A",
-                            f"${res['stop_s']:.2f}" if res['stop_s'] else "N/A",
-                            f"${res['tp_s']:.2f}" if res['tp_s'] else "N/A",
-                        ]
-                    }
-                    st.dataframe(pd.DataFrame(plan),hide_index=True,use_container_width=True)
-                with col2:
-                    st.markdown("**점수 분석**")
-                    scores={"모듈":["TREND","CYCLE","SEASON","IRREG"],
-                            "점수":[f"{res['ts']}/4",f"{res['cs']}/4",f"{res['ss']}/4",f"{res['irs']}/4"]}
-                    st.dataframe(pd.DataFrame(scores),hide_index=True,use_container_width=True)
-                with col3:
-                    st.markdown("**지표**")
-                    inds={"지표":["StochRSI","ADX","ROC","1주","1개월"],
-                          "값":[f"{res['stoch']:.1f}",f"{res['adx']:.1f}",
-                                f"{res['roc']:+.1f}%",f"{res['ret_1w']:+.1f}%",f"{res['ret_1m']:+.1f}%"]}
-                    st.dataframe(pd.DataFrame(inds),hide_index=True,use_container_width=True)
-                st.plotly_chart(draw_chart(res),use_container_width=True)
+    # ── 상세 카드 (TOP N) ──
+    st.markdown(f"#### 📋 TOP {min(top_n, len(top_n_results))}종목 상세 매매 플랜")
+    for r in top_n_results:
+        b1 = r["fib_lv"][0]; b2 = r["fib_lv"][1]; b3 = r["fib_lv"][2]
+        sig_colors = {"🟢 매수 근접":"#00ff9d","🟡 대기 중":"#ffd700",
+                      "⏳ 원거리":"#6b7280","❌ 하락장":"#ff4757"}
+        sc = sig_colors.get(r["signal"],"#9ca3af")
+        bull_icon = "📈 불타기" if r["is_bull"] else "📉 물타기"
+        bull_col  = "#00ff9d" if r["is_bull"] else "#ffd700"
 
-    # Excel 다운로드
+        with st.expander(
+            f"  {r['ticker']}  |  ${r['price']:.2f}  |  "
+            f"{r['signal']}  |  추천점수 {r['total_rec_score']:.0f}점",
+            expanded=False
+        ):
+            # 상단 요약
+            ec1,ec2,ec3,ec4 = st.columns(4)
+            mcard(ec1,"현재가",    f"${r['price']:.2f}",  "#00d4ff")
+            mcard(ec2,"장세",      r["regime_desc"],        "#e8eaf6")
+            mcard(ec3,"AI 점수",   f"{r['pct']:.0f}%",     sc)
+            mcard(ec4,"추가매수",  bull_icon,               bull_col,
+                  f"조건 {r['bull_score']}/3")
+
+            st.markdown("")
+
+            # 매매 플랜 표
+            plan_rows = [
+                {"구분":"1차 매수 (BUY1)", "목표가":f"${b1:.2f}" if b1 else "대기",
+                 "현재가 대비":f"{(b1/r['price']-1)*100:+.1f}%" if b1 else "-",
+                 "상태":"✅ 유효" if b1 else "⏳ 대기"},
+                {"구분":"2차 매수 (BUY2)", "목표가":f"${b2:.2f}" if b2 else "대기",
+                 "현재가 대비":f"{(b2/r['price']-1)*100:+.1f}%" if b2 else "-",
+                 "상태":"✅ 유효" if b2 else "⏳ 대기"},
+                {"구분":"3차 매수 (BUY3)", "목표가":f"${b3:.2f}" if b3 else "대기",
+                 "현재가 대비":f"{(b3/r['price']-1)*100:+.1f}%" if b3 else "-",
+                 "상태":"✅ 유효" if b3 else "⏳ 대기"},
+                {"구분":"손절선",
+                 "목표가":f"${r['stop_s']:.2f}" if r["stop_s"] else "-",
+                 "현재가 대비":f"{(r['stop_s']/r['price']-1)*100:+.1f}%" if r["stop_s"] else "-",
+                 "상태":"✅"},
+                {"구분":"익절 목표",
+                 "목표가":f"${r['tp_s']:.2f}" if r["tp_s"] else "-",
+                 "현재가 대비":f"{(r['tp_s']/r['price']-1)*100:+.1f}%" if r["tp_s"] else "-",
+                 "상태":"✅"},
+            ]
+            st.dataframe(pd.DataFrame(plan_rows),
+                use_container_width=True, hide_index=True,
+                column_config={
+                    "구분":       st.column_config.TextColumn(width="medium"),
+                    "목표가":     st.column_config.TextColumn(width="small"),
+                    "현재가 대비":st.column_config.TextColumn(width="small"),
+                    "상태":       st.column_config.TextColumn(width="small"),
+                })
+
+            # 불타기 판단
+            if r["is_bull"]:
+                st.success(f"📈 불타기 신호 감지 ({r['bull_score']}/3) — 현재가에서 추가 매수 고려")
+            else:
+                st.info(f"📉 물타기 대기 ({r['bull_score']}/3) — 피보나치 BUY 구간 도달 대기")
+
     st.markdown("---")
-    buf=io.BytesIO()
-    with pd.ExcelWriter(buf,engine="openpyxl") as writer:
-        df_rank.to_excel(writer,sheet_name="종목순위",index=False)
-        if top5:
-            top5_data=[{"종목":r["ticker"],"점수":f"{r['pct']:.0f}%",
-                "BUY1":f"${r['fib_lv'][0]:.2f}" if r['fib_lv'][0] else "N/A",
-                "손절":f"${r['stop_s']:.2f}" if r['stop_s'] else "N/A",
-                "익절":f"${r['tp_s']:.2f}" if r['tp_s'] else "N/A"} for r in top5]
-            pd.DataFrame(top5_data).to_excel(writer,sheet_name="TOP5",index=False)
+
+    # ── 전체 스캔 결과 표 ──
+    with st.expander(f"📊 전체 스캔 결과 ({len(scan_results)}개) 보기"):
+        all_rows = []
+        for r in scan_results:
+            b1 = r["fib_lv"][0]
+            all_rows.append({
+                "종목":      r["ticker"],
+                "현재가":    f"${r['price']:.2f}",
+                "장세":      r["regime_desc"],
+                "신호":      r["signal"],
+                "BUY1":      f"${b1:.2f}" if b1 else "대기",
+                "BUY1까지":  f"{r['dist_pct']:+.1f}%",
+                "AI 점수":   f"{r['pct']:.0f}%",
+                "추천 점수": f"{r['total_rec_score']:.0f}점",
+                "1주":       f"{r['ret_1w']:+.1f}%",
+            })
+        st.dataframe(pd.DataFrame(all_rows),
+            use_container_width=True, hide_index=True)
+
+    # ── Excel 다운로드 ──
+    st.markdown("---")
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        df_top.to_excel(writer, sheet_name=f"TOP{top_n} 추천", index=False)
+        pd.DataFrame(all_rows).to_excel(writer, sheet_name="전체 스캔", index=False)
     buf.seek(0)
-    now_str=datetime.datetime.now().strftime("%Y%m%d_%H%M")
-    st.download_button("📊 추천 결과 Excel 다운로드",data=buf.getvalue(),
-        file_name=f"isekai_추천_{now_str}.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    now_str = datetime.datetime.now().strftime("%Y%m%d_%H%M")
+    st.download_button(
+        "📊 스캔 결과 Excel 다운로드", data=buf.getvalue(),
+        file_name=f"isekai_scan_{now_str}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
 
 # ════════════════════════════════════════════════════════════
 # 📊 백테스트
