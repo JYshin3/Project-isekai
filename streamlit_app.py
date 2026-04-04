@@ -252,10 +252,9 @@ def build_features(df):
 @st.cache_data(ttl=300)
 def analyze(ticker, period="1y"):
     try:
-        # MA200 계산에 최소 200일 필요 → period가 짧으면 자동으로 2y로 확장
-        actual_period = period
-        if period in ["6mo"] and True:
-            actual_period = "1y"
+        # MA200 계산 + 백테스트에 최소 252봉 필요
+        # 1y = 252봉 → START=200 이후 거래 구간 52봉뿐 → 자동 2y 확장
+        actual_period = "2y" if period in ["6mo","1y"] else period
         df=yf.download(ticker,period=actual_period,interval="1d",auto_adjust=True,progress=False)
         if df.empty or len(df)<80: return None
         if isinstance(df.columns,pd.MultiIndex): df.columns=df.columns.get_level_values(0)
@@ -285,14 +284,29 @@ def analyze(ticker, period="1y"):
             use_sh, use_rng = None, None
 
         if use_sh and use_rng:
-            fib_lv=[use_sh - use_rng*f for f in cfg["fib"]]
-            fib886 = use_sh - use_rng*0.886
-            # ✅ 최종 검증: BUY1은 반드시 현재가보다 낮아야 함
-            if fib_lv[0] >= price:
-                # 피보나치가 현재가 위 → 레벨 조정
-                fib_lv = [None, None, None]; fib886 = None
+            fib_lv_raw = [use_sh - use_rng*f for f in cfg["fib"]]
+            fib886     = use_sh - use_rng*0.886
+            # BUY1~3 중 현재가보다 낮은 레벨만 유효 처리
+            # 현재가보다 높은 레벨은 None (이미 지나간 구간)
+            fib_lv = [
+                f if f < price else None
+                for f in fib_lv_raw
+            ]
+            # 모든 레벨이 None이면 (현재가가 모든 BUY 레벨 아래)
+            # → 더 긴 스윙으로 재계산 시도
+            if all(f is None for f in fib_lv):
+                # 120일 스윙으로 확장
+                sh120  = float(df["High"].rolling(120).max().iloc[-1])
+                sl120  = float(df["Low"].rolling(120).min().iloc[-1])
+                rng120 = sh120 - sl120
+                if rng120 > 0 and sh120 > price:
+                    fib_lv_raw2 = [sh120 - rng120*f for f in cfg["fib"]]
+                    fib_lv  = [f if f < price else None for f in fib_lv_raw2]
+                    fib886  = sh120 - rng120*0.886
+                    use_sh  = sh120
+                    use_rng = rng120
         else:
-            fib_lv=[None,None,None]; fib886=None
+            fib_lv=[None,None,None]; fib886=None; use_sh=None; use_rng=None
         # 신호 결정
         near_fib=any(abs(price-f)/f<0.03 for f in fib_lv if f)
         if regime=="DOWNtrend":
@@ -324,6 +338,7 @@ def analyze(ticker, period="1y"):
             "stoch":float(row["StochRSI"]),"adx":float(row["ADX"]),
             "roc":float(row["ROC"])*100 if not pd.isna(row["ROC"]) else 0,
             "ret_1w":ret_1w,"ret_1m":ret_1m,"near_fib":near_fib,
+            "sw_h_used":use_sh,"rng_used":use_rng,
         }
     except Exception:
         return None
@@ -455,9 +470,9 @@ def run_backtest(df):
                 trades.append({
                     "날짜":   str(row["Date"])[:10],
                     "구분":   "BUY2",
-                    "단계":   f"2차 매수 34% [{mode}]",
+                    "단계":   f"2차 매수 35% [{mode}]",
                     "가격":   round(buy2_price, 2),
-                    "비중":   "34%",
+                    "비중":   "35%",
                     "레짐":   regime,
                     "피보":   f"Fib {cfg['fib'][1]}" if mode=="물타기" else "불타기 진입",
                     "수익률": f"{(buy2_price/ep[0]-1)*100:+.1f}%",
@@ -491,9 +506,9 @@ def run_backtest(df):
                 trades.append({
                     "날짜":   str(row["Date"])[:10],
                     "구분":   "BUY3",
-                    "단계":   f"3차 매수 33% [{mode}]",
+                    "단계":   f"3차 매수 35% [{mode}]",
                     "가격":   round(buy3_price, 2),
-                    "비중":   "33%",
+                    "비중":   "35%",
                     "레짐":   regime,
                     "피보":   f"Fib {cfg['fib'][2]}" if mode=="물타기" else "불타기 진입",
                     "수익률": f"{(buy3_price/ep[0]-1)*100:+.1f}%",
@@ -856,49 +871,73 @@ elif menu=="🔍 종목 분석" and analyze_btn:
     else:
         st.warning("스윙 고점/저점 계산 불가 — 데이터 부족")
 
-    if res["fib_lv"][0] is None:
-        st.error("⚠️ 현재 피보나치 매수 구간을 계산할 수 없습니다. 현재가가 최근 고점 위에 있거나 추세가 너무 강한 상승 중입니다.")
-        st.info("💡 피보나치 매수는 고점 대비 하락(되돌림) 구간에서 진입하는 전략입니다. 가격이 충분히 조정된 후 재분석하세요.")
-    else:
-        plan_data={
-            "구분":["1차 매수 (BUY1)","2차 매수 (BUY2)","3차 매수 (BUY3)","손절선","익절 목표"],
-            "목표가":[
-                f"${res['fib_lv'][0]:.2f}" if res['fib_lv'][0] else "N/A",
-                f"${res['fib_lv'][1]:.2f}" if res['fib_lv'][1] else "N/A",
-                f"${res['fib_lv'][2]:.2f}" if res['fib_lv'][2] else "N/A",
-                f"${res['stop_s']:.2f}"    if res['stop_s']    else "N/A",
-                f"${res['tp_s']:.2f}"      if res['tp_s']      else "N/A",
-            ],
-            "현재가 대비":[
-                f"{(res['fib_lv'][i]/res['price']-1)*100:+.1f}%" if res['fib_lv'][i] else "-"
-                for i in range(3)
-            ]+[
-                f"{(res['stop_s']/res['price']-1)*100:+.1f}%" if res['stop_s'] else "-",
-                f"{(res['tp_s']/res['price']-1)*100:+.1f}%"   if res['tp_s']   else "-",
-            ],
-            "계산식":[
-                f"${sw_h:.2f} - ${rng_val:.2f} × {res['cfg']['fib'][0]}" if sw_h and rng_val else "-",
-                f"${sw_h:.2f} - ${rng_val:.2f} × {res['cfg']['fib'][1]}" if sw_h and rng_val else "-",
-                f"${sw_h:.2f} - ${rng_val:.2f} × {res['cfg']['fib'][2]}" if sw_h and rng_val else "-",
-                f"평균단가 × {1-res['cfg']['stop']:.2f}",
-                f"평균단가 × {1+res['cfg']['tp']:.2f}",
-            ],
-            "설명":[
-                f"Fib {res['cfg']['fib'][0]} — 1차 진입 (30%)",
-                f"Fib {res['cfg']['fib'][1]} — 2차 물타기 (34%)",
-                f"Fib {res['cfg']['fib'][2]} — 3차 물타기 (33%)",
-                f"손절 -{res['cfg']['stop']*100:.0f}% / Fib 0.886",
-                f"익절 +{res['cfg']['tp']*100:.0f}% 전량 청산",
-            ]
-        }
-        st.dataframe(pd.DataFrame(plan_data), use_container_width=True, hide_index=True,
-            column_config={
-                "구분":       st.column_config.TextColumn("구분",      width="medium"),
-                "목표가":     st.column_config.TextColumn("목표가",    width="small"),
-                "현재가 대비": st.column_config.TextColumn("현재가 대비", width="small"),
-                "계산식":     st.column_config.TextColumn("계산식",    width="medium"),
-                "설명":       st.column_config.TextColumn("설명",      width="large"),
-            })
+    # 모든 상황에서 매매 플랜 표 표시
+    # (피보나치 계산 불가 시에도 상태와 이유를 명확히 표시)
+    all_none = all(f is None for f in res["fib_lv"])
+    if all_none:
+        st.warning("⚠️ 피보나치 매수 대기 구간: 현재가가 최근 스윙 고점 위에 있습니다. 조정 후 진입 구간이 생성됩니다.")
+
+    # 사용된 스윙 정보 (analyze에서 반환된 값 활용)
+    sw_h_used   = res.get("sw_h_used",   sw_h)
+    rng_used    = res.get("rng_used",    rng_val)
+
+    def fmt_price(f):
+        return f"${f:.2f}" if f else "대기 중"
+    def fmt_dist(f, price):
+        if not f: return "—"
+        d = (f/price-1)*100
+        return f"{d:+.1f}%"
+    def fmt_calc(f_lvl, sh, rng):
+        if not sh or not rng: return "-"
+        return f"${sh:.2f} - ${rng:.2f}×{f_lvl}"
+
+    plan_data={
+        "구분":["1차 매수 (BUY1)","2차 매수 (BUY2)","3차 매수 (BUY3)","손절선","익절 목표"],
+        "목표가":[
+            fmt_price(res["fib_lv"][0]),
+            fmt_price(res["fib_lv"][1]),
+            fmt_price(res["fib_lv"][2]),
+            fmt_price(res["stop_s"]),
+            fmt_price(res["tp_s"]),
+        ],
+        "현재가 대비":[
+            fmt_dist(res["fib_lv"][0], res["price"]),
+            fmt_dist(res["fib_lv"][1], res["price"]),
+            fmt_dist(res["fib_lv"][2], res["price"]),
+            fmt_dist(res["stop_s"],    res["price"]),
+            fmt_dist(res["tp_s"],      res["price"]),
+        ],
+        "계산식":[
+            fmt_calc(res["cfg"]["fib"][0], sw_h_used, rng_used),
+            fmt_calc(res["cfg"]["fib"][1], sw_h_used, rng_used),
+            fmt_calc(res["cfg"]["fib"][2], sw_h_used, rng_used),
+            f"평균단가 × {1-res['cfg']['stop']:.2f}",
+            f"평균단가 × {1+res['cfg']['tp']:.2f}",
+        ],
+        "상태":[
+            "⏳ 대기" if not res["fib_lv"][0] else "✅ 유효",
+            "⏳ 대기" if not res["fib_lv"][1] else "✅ 유효",
+            "⏳ 대기" if not res["fib_lv"][2] else "✅ 유효",
+            "✅" if res["stop_s"] else "—",
+            "✅" if res["tp_s"]   else "—",
+        ],
+        "설명":[
+            f"Fib {res['cfg']['fib'][0]} — 1차 진입 (30%)",
+            f"Fib {res['cfg']['fib'][1]} — 2차 추가 (35%)",
+            f"Fib {res['cfg']['fib'][2]} — 3차 추가 (35%)",
+            f"손절 -{res['cfg']['stop']*100:.0f}% / Fib 0.886 중 높은 값",
+            f"익절 +{res['cfg']['tp']*100:.0f}% 전량 청산",
+        ]
+    }
+    st.dataframe(pd.DataFrame(plan_data), use_container_width=True, hide_index=True,
+        column_config={
+            "구분":        st.column_config.TextColumn("구분",       width="medium"),
+            "목표가":      st.column_config.TextColumn("목표가",     width="small"),
+            "현재가 대비": st.column_config.TextColumn("현재가 대비",width="small"),
+            "계산식":      st.column_config.TextColumn("계산식",     width="medium"),
+            "상태":        st.column_config.TextColumn("상태",       width="small"),
+            "설명":        st.column_config.TextColumn("설명",       width="large"),
+        })
 
     st.markdown("---")
 
@@ -1734,9 +1773,16 @@ elif menu=="📊 백테스트" and bt_btn:
         """)
     st.markdown("---")
 
+    if period_input == "1y":
+        st.info("ℹ️ 1년 기간 선택 시 MA200 안정화를 위해 자동으로 2년 데이터를 사용합니다.")
     if not metrics:
-        st.warning("거래 없음 — 기간을 2y 이상으로 늘려보세요. (MA200 계산에 200일 필요)")
-        st.info("UNKNOWN 레짐 구간은 MA200 미계산 구간으로 거래하지 않습니다.")
+        st.warning("거래 없음 — 다음을 확인하세요:")
+        st.markdown("""
+        - 기간이 너무 짧음 → 2y 이상 권장
+        - 해당 종목이 박스/하락장 중 → 상승장 종목 시도
+        - MA200 데이터 부족 → 상장 200일 미만 종목 불가
+        """)
+        st.info("UNKNOWN 레짐 구간(MA200 미계산)은 거래하지 않습니다.")
     else:
         m = metrics
 
@@ -1781,7 +1827,7 @@ elif menu=="📊 백테스트" and bt_btn:
         st.markdown("#### 📊 분할매수 단계별 통계")
         stage_data = {
             "단계":      ["BUY1 (1차 진입)", "BUY2 (2차)", "BUY3 (3차)", "SELL (청산)"],
-            "비중":      ["30%", "34%", "33%", "전량"],
+            "비중":      ["30%", "35%", "35%", "전량"],
             "전체":      [m["BUY1 진입"], m["BUY2 추가"], m["BUY3 추가"], m["총 완결 거래"]],
             "물타기":    ["-", m["BUY2 물타기"], m["BUY3 물타기"], "-"],
             "불타기":    ["-", m["BUY2 불타기"], m["BUY3 불타기"], "-"],
