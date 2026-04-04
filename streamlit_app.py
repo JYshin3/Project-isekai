@@ -1705,70 +1705,183 @@ elif menu=="🔍 종목 분석" and analyze_btn:
 
     st.markdown("---")
 
-    # ── 📝 내 매매 기록 입력 ──
-    st.markdown("#### 📝 내 매매 기록")
-    st.caption("실제로 매수한 가격을 입력하면 현재 수익률과 매매 플랜 대비 평가를 보여줍니다.")
+    # ════════════════════════════════════════════════════════════
+    # 📝 내 매매 기록 + 재진입 타이밍
+    # ════════════════════════════════════════════════════════════
+    st.markdown("#### 📝 내 매매 기록 & 재진입 타이밍")
 
-    with st.expander("✏️ 내 매수 기록 입력하기", expanded=False):
-        mc1, mc2, mc3 = st.columns(3)
-        my_price1 = mc1.number_input("내 매수가 1 ($)", min_value=0.0, value=0.0, step=0.01, format="%.2f")
-        my_qty1   = mc1.number_input("수량 1 (주)", min_value=0, value=0, step=1)
-        my_price2 = mc2.number_input("내 매수가 2 ($)", min_value=0.0, value=0.0, step=0.01, format="%.2f")
-        my_qty2   = mc2.number_input("수량 2 (주)", min_value=0, value=0, step=1)
-        my_price3 = mc3.number_input("내 매수가 3 ($)", min_value=0.0, value=0.0, step=0.01, format="%.2f")
-        my_qty3   = mc3.number_input("수량 3 (주)", min_value=0, value=0, step=1)
+    # session_state로 매매 기록 관리 (페이지 새로고침 전까지 유지)
+    rec_key = f"trade_log_{ticker_input}"
+    if rec_key not in st.session_state:
+        st.session_state[rec_key] = []
 
-        my_entries = [(p,q) for p,q in [(my_price1,my_qty1),(my_price2,my_qty2),(my_price3,my_qty3)] if p>0 and q>0]
+    with st.expander("✏️ 매매 기록 입력", expanded=True):
+        rc1, rc2, rc3, rc4, rc5 = st.columns(5)
+        tr_date  = rc1.date_input("날짜", value=datetime.date.today(), key="tr_date")
+        tr_type  = rc2.selectbox("구분", ["매수","손절","익절","추가매수"], key="tr_type")
+        tr_price = rc3.number_input("가격 ($)", min_value=0.0, value=0.0,
+                                    step=0.01, format="%.2f", key="tr_price")
+        tr_qty   = rc4.number_input("수량 (주)", min_value=0, value=0,
+                                    step=1, key="tr_qty")
+        tr_memo  = rc5.text_input("메모", value="", key="tr_memo")
 
-        if my_entries:
-            total_cost = sum(p*q for p,q in my_entries)
-            total_qty  = sum(q for _,q in my_entries)
-            my_avg     = total_cost / total_qty
-            my_pnl_pct = (res["price"] - my_avg) / my_avg * 100
-            my_pnl_usd = (res["price"] - my_avg) * total_qty
+        col_add, col_clear = st.columns(2)
+        if col_add.button("➕ 기록 추가", use_container_width=True):
+            if tr_price > 0 and tr_qty > 0:
+                st.session_state[rec_key].append({
+                    "날짜":   str(tr_date),
+                    "구분":   tr_type,
+                    "가격":   tr_price,
+                    "수량":   tr_qty,
+                    "금액":   tr_price * tr_qty,
+                    "메모":   tr_memo,
+                })
+                st.success(f"✅ {tr_type} 기록 추가됨")
+                st.rerun()
+            else:
+                st.warning("가격과 수량을 입력하세요.")
+
+        if col_clear.button("🗑️ 기록 초기화", use_container_width=True):
+            st.session_state[rec_key] = []
+            st.rerun()
+
+    # 기록이 있으면 분석 표시
+    logs = st.session_state.get(rec_key, [])
+    if logs:
+        df_log = pd.DataFrame(logs)
+        st.dataframe(df_log, use_container_width=True, hide_index=True,
+            column_config={
+                "날짜":  st.column_config.TextColumn(width="small"),
+                "구분":  st.column_config.TextColumn(width="small"),
+                "가격":  st.column_config.NumberColumn(format="$%.2f", width="small"),
+                "수량":  st.column_config.NumberColumn(width="small"),
+                "금액":  st.column_config.NumberColumn(format="$%.2f", width="small"),
+                "메모":  st.column_config.TextColumn(width="medium"),
+            })
+
+        # 현재 포지션 계산
+        buy_logs  = [l for l in logs if l["구분"] in ["매수","추가매수"]]
+        sell_logs = [l for l in logs if l["구분"] in ["손절","익절"]]
+        open_qty  = sum(l["수량"] for l in buy_logs) - sum(l["수량"] for l in sell_logs)
+
+        if open_qty > 0 and buy_logs:
+            # 열린 포지션 분석
+            total_cost = sum(l["금액"] for l in buy_logs) - sum(l["금액"] for l in sell_logs)
+            my_avg     = total_cost / open_qty if open_qty > 0 else 0
+            my_pnl_pct = (res["price"] - my_avg) / my_avg * 100 if my_avg > 0 else 0
+            my_pnl_usd = (res["price"] - my_avg) * open_qty if my_avg > 0 else 0
             pnl_color  = "#00ff9d" if my_pnl_pct > 0 else "#ff4757"
 
-            # 매매 플랜 대비 평가
-            if res["fib_lv"][0] and my_avg <= res["fib_lv"][0]:
-                plan_eval = "✅ 완벽 — BUY1 이하 진입"
-            elif res["fib_lv"][1] and my_avg <= res["fib_lv"][1]:
-                plan_eval = "🟡 양호 — BUY2 구간 진입"
-            elif res["fib_lv"][2] and my_avg <= res["fib_lv"][2]:
-                plan_eval = "🟠 보통 — BUY3 구간 진입"
-            else:
-                plan_eval = "⚠️ 계획보다 높은 가격에 진입"
-
-            # 손절/익절까지 거리
-            stop_dist = f"{(res['stop_s']/my_avg-1)*100:+.1f}%" if res["stop_s"] else "N/A"
-            tp_dist   = f"{(res['tp_s']/my_avg-1)*100:+.1f}%"   if res["tp_s"]   else "N/A"
+            stop_s = res["stop_s"] if res["stop_s"] else my_avg * (1 - res["cfg"]["stop"])
+            tp_s   = res["tp_s"]   if res["tp_s"]   else my_avg * (1 + res["cfg"]["tp"])
 
             st.markdown(f"""
-            <div style="background:#0f172a;border:1px solid #1e3a5f;border-radius:10px;padding:16px;margin-top:12px">
-              <div style="font-size:.82rem;color:#6b7280;margin-bottom:10px">📊 내 매매 현황</div>
-              <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:12px">
+            <div style="background:#0f172a;border:1.5px solid #00d4ff;
+                        border-radius:10px;padding:14px;margin-top:8px">
+              <div style="color:#00d4ff;font-weight:700;margin-bottom:10px">
+                📊 현재 포지션 현황
+              </div>
+              <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
                 <div style="background:#111827;border-radius:8px;padding:10px;text-align:center">
                   <div style="color:#6b7280;font-size:.7rem">평균단가</div>
-                  <div style="color:#00d4ff;font-weight:700;font-size:1.1rem">${my_avg:.2f}</div>
+                  <div style="color:#00d4ff;font-weight:700">${my_avg:.2f}</div>
                 </div>
                 <div style="background:#111827;border-radius:8px;padding:10px;text-align:center">
-                  <div style="color:#6b7280;font-size:.7rem">현재 수익률</div>
-                  <div style="color:{pnl_color};font-weight:700;font-size:1.1rem">{my_pnl_pct:+.2f}%</div>
+                  <div style="color:#6b7280;font-size:.7rem">수익률</div>
+                  <div style="color:{pnl_color};font-weight:700">{my_pnl_pct:+.2f}%</div>
                 </div>
                 <div style="background:#111827;border-radius:8px;padding:10px;text-align:center">
                   <div style="color:#6b7280;font-size:.7rem">평가손익</div>
-                  <div style="color:{pnl_color};font-weight:700;font-size:1.1rem">${my_pnl_usd:+.2f}</div>
+                  <div style="color:{pnl_color};font-weight:700">${my_pnl_usd:+.2f}</div>
+                </div>
+                <div style="background:#111827;border-radius:8px;padding:10px;text-align:center">
+                  <div style="color:#6b7280;font-size:.7rem">보유 주수</div>
+                  <div style="color:#e8eaf6;font-weight:700">{open_qty}주</div>
                 </div>
               </div>
-              <div style="font-size:.82rem;line-height:2">
-                <span style="color:#6b7280">총 보유 주수:</span> <b>{total_qty}주</b> &nbsp;|&nbsp;
-                <span style="color:#6b7280">총 투자금:</span> <b>${total_cost:.2f}</b><br>
-                <span style="color:#6b7280">매매플랜 평가:</span> <b>{plan_eval}</b><br>
-                <span style="color:#6b7280">손절까지:</span>
-                <b style="color:#ff4757">{stop_dist}</b> &nbsp;|&nbsp;
-                <span style="color:#6b7280">익절 목표까지:</span>
-                <b style="color:#00ff9d">{tp_dist}</b>
+              <div style="margin-top:10px;font-size:.82rem;line-height:2;color:#9ca3af">
+                손절선: <b style="color:#ff4757">${stop_s:.2f}</b>
+                ({(stop_s/my_avg-1)*100:+.1f}%) &nbsp;|&nbsp;
+                익절 목표: <b style="color:#00ff9d">${tp_s:.2f}</b>
+                ({(tp_s/my_avg-1)*100:+.1f}%)
               </div>
             </div>""", unsafe_allow_html=True)
+
+        elif sell_logs:
+            # 손절/익절 후 재진입 타이밍 분석
+            last_sell = sell_logs[-1]
+            is_stoploss = last_sell["구분"] == "손절"
+
+            if is_stoploss:
+                st.markdown("""
+                <div style="background:#1a0000;border:1.5px solid #ff4757;
+                            border-radius:10px;padding:14px;margin-top:8px">
+                  <div style="color:#ff4757;font-weight:700;margin-bottom:8px">
+                    ❌ 손절 후 재진입 타이밍 분석
+                  </div>""", unsafe_allow_html=True)
+
+                # 재진입 조건 체크
+                reentry_conditions = []
+
+                # 1. 레짐 확인
+                if res["regime"] == "DOWNtrend":
+                    reentry_conditions.append(("❌ 레짐", "DOWNtrend — 재진입 금지", False))
+                elif res["regime"] == "UPtrend":
+                    reentry_conditions.append(("✅ 레짐", "UPtrend — 재진입 가능", True))
+                else:
+                    reentry_conditions.append(("🟡 레짐", "RANGE — 조건부 재진입", True))
+
+                # 2. 피보나치 BUY 구간
+                if res["fib_lv"][0]:
+                    dist = (res["fib_lv"][0]/res["price"]-1)*100
+                    reentry_conditions.append((
+                        "✅ BUY1" if abs(dist)<=5 else "🟡 BUY1",
+                        f"${res['fib_lv'][0]:.2f} ({dist:+.1f}%)",
+                        abs(dist) <= 10
+                    ))
+                else:
+                    reentry_conditions.append(("⏳ BUY1", "대기 중 — 구간 미형성", False))
+
+                # 3. StochRSI
+                stoch_ok = res["stoch"] < res["cfg"]["stoch"]
+                reentry_conditions.append((
+                    "✅ StochRSI" if stoch_ok else "❌ StochRSI",
+                    f"{res['stoch']:.1f} (기준: {res['cfg']['stoch']} 이하)",
+                    stoch_ok
+                ))
+
+                # 4. AI 점수
+                score_ok = res["pct"] >= 45
+                reentry_conditions.append((
+                    "✅ AI점수" if score_ok else "❌ AI점수",
+                    f"{res['pct']:.0f}% (기준: 45% 이상)",
+                    score_ok
+                ))
+
+                ok_count = sum(1 for _,_,ok in reentry_conditions if ok)
+                ready    = ok_count >= 3
+
+                for label, desc, ok in reentry_conditions:
+                    color = "#00ff9d" if ok else "#ff4757"
+                    st.markdown(
+                        f"<div style='color:{color};font-size:.82rem;padding:2px 0'>"
+                        f"{label}: {desc}</div>", unsafe_allow_html=True
+                    )
+
+                conclusion_color = "#00ff9d" if ready else "#ff4757"
+                conclusion = (
+                    f"✅ 재진입 조건 충족 ({ok_count}/4) — BUY1에서 재진입 고려"
+                    if ready else
+                    f"⏳ 재진입 대기 ({ok_count}/4) — 조건이 더 충족될 때까지 현금 보유"
+                )
+                st.markdown(
+                    f"<div style='color:{conclusion_color};font-weight:700;"
+                    f"margin-top:10px;font-size:.88rem'>{conclusion}</div>",
+                    unsafe_allow_html=True
+                )
+                st.markdown("</div>", unsafe_allow_html=True)
+            else:
+                st.success(f"✅ 익절 완료 — 다음 BUY1 구간 형성 대기 중")
 
     # ── 4-Factor 점수 표 ──
     st.markdown("#### 🧩 AI 점수 분석")
@@ -2042,81 +2155,100 @@ elif menu=="🔍 종목 분석" and analyze_btn:
     st.markdown("---")
 
     # ════════════════════════════════════════════════════════════
-    # 📰 뉴스 감성 분석
     # ════════════════════════════════════════════════════════════
-    st.markdown("#### 📰 실시간 뉴스 감성 분석")
+    # 📰 뉴스 & Claude AI 투자 전망 분석
+    # ════════════════════════════════════════════════════════════
+    st.markdown("#### 📰 뉴스 & AI 투자 전망 분석")
 
-    def get_news_sentiment(ticker):
+    @st.cache_data(ttl=1800)
+    def get_news_items(ticker):
         try:
             tk_obj = yf.Ticker(ticker)
             news   = tk_obj.news or []
-            if not news:
-                return 0.0, []
-            headlines = [n.get("title","") for n in news[:15]]
-
-            # VADER → TextBlob → 키워드 순 fallback
-            try:
-                from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
-                sia    = SentimentIntensityAnalyzer()
-                scores = [sia.polarity_scores(h)["compound"] for h in headlines]
-            except ImportError:
-                try:
-                    from textblob import TextBlob
-                    scores = [TextBlob(h).sentiment.polarity for h in headlines]
-                except ImportError:
-                    pos_kw = ["beat","surge","jump","strong","record","growth",
-                              "bull","gain","profit","upgrade","buy","rally","up"]
-                    neg_kw = ["miss","fall","drop","weak","loss","bear","down",
-                              "cut","warn","risk","downgrade","sell","crash"]
-                    scores = []
-                    for h in headlines:
-                        hl = h.lower()
-                        s  = sum(1 for w in pos_kw if w in hl) \
-                           - sum(1 for w in neg_kw if w in hl)
-                        scores.append(max(-1.0, min(1.0, s / 3.0)))
-
-            avg = float(np.mean(scores)) if scores else 0.0
-            return avg, list(zip(headlines, scores))
+            items  = []
+            for n in news[:10]:
+                title    = n.get("title","")
+                pub_time = n.get("providerPublishTime",0)
+                pub_date = datetime.datetime.fromtimestamp(pub_time).strftime("%m-%d") if pub_time else ""
+                source   = n.get("publisher","")
+                link     = n.get("link","")
+                if title:
+                    items.append({"title":title,"date":pub_date,
+                                  "source":source,"link":link})
+            return items
         except Exception:
-            return 0.0, []
+            return []
 
-    with st.spinner("뉴스 가져오는 중..."):
-        sentiment, news_list = get_news_sentiment(ticker_input)
+    with st.spinner("뉴스 수집 중..."):
+        news_items = get_news_items(ticker_input)
 
-    if news_list:
-        # 감성 요약 카드
-        sent_color = "#00ff9d" if sentiment > 0.1 else \
-                     "#ff4757" if sentiment < -0.1 else "#ffd700"
-        sent_label = "긍정적 📈" if sentiment > 0.1 else \
-                     "부정적 📉" if sentiment < -0.1 else "중립 ➡️"
-        st.markdown(f"""
-        <div style="background:#111827;border:1px solid #1e2d4a;border-radius:10px;
-                    padding:14px;text-align:center;margin-bottom:12px">
-          <div style="color:#6b7280;font-size:.78rem">평균 뉴스 감성</div>
-          <div style="font-size:1.6rem;font-weight:700;color:{sent_color};margin:4px 0">
-            {sentiment:+.3f}
-          </div>
-          <div style="color:{sent_color};font-size:.85rem">{sent_label}</div>
-        </div>""", unsafe_allow_html=True)
+    if news_items:
+        # 헤드라인 목록
+        for item in news_items:
+            st.markdown(
+                f"- `{item['date']}` **{item['title']}** "
+                f"<span style='color:#6b7280;font-size:.75rem'>— {item['source']}</span>",
+                unsafe_allow_html=True
+            )
+        st.markdown("")
 
-        # 뉴스 헤드라인 표
-        news_rows = []
-        for headline, score in news_list:
-            sc = float(score)
-            news_rows.append({
-                "감성":     "📈 긍정" if sc > 0.1 else "📉 부정" if sc < -0.1 else "➡️ 중립",
-                "점수":     f"{sc:+.3f}",
-                "헤드라인": headline,
-            })
-        df_news = pd.DataFrame(news_rows)
-        st.dataframe(df_news, use_container_width=True, hide_index=True,
-            column_config={
-                "감성":     st.column_config.TextColumn("감성",     width="small"),
-                "점수":     st.column_config.TextColumn("점수",     width="small"),
-                "헤드라인": st.column_config.TextColumn("헤드라인", width="large"),
-            })
+        # Claude AI 분석 버튼
+        if st.button("🤖 Claude AI 투자 전망 분석", key="news_ai_btn",
+                     use_container_width=True, type="primary"):
+            headlines_text = "\n".join(
+                [f"- [{i['date']}] {i['title']}" for i in news_items]
+            )
+            fib1 = f"${res['fib_lv'][0]:.2f}" if res['fib_lv'][0] else "대기"
+            prompt = f"""당신은 주식 투자 전문 애널리스트입니다.
+아래는 {ticker_input}의 최근 뉴스입니다.
+
+{headlines_text}
+
+현재 상황:
+- 현재가: ${res['price']:.2f}
+- 레짐: {res['regime']} ({res['cfg']['desc']})
+- 피보나치 BUY1: {fib1}
+- AI 점수: {res['pct']:.0f}%
+
+다음을 한국어로 간결하게 분석해주세요:
+
+1. **뉴스 감성** (매우긍정/긍정/중립/부정/매우부정)
+2. **핵심 이슈** (2~3줄)
+3. **주가 영향** (단기/중기)
+4. **매수 타이밍** (지금 진입 가능한지, 대기해야 하는지)
+5. **주요 리스크**
+
+실용적이고 핵심만 작성해주세요."""
+
+            with st.spinner("Claude AI 분석 중..."):
+                try:
+                    import requests as req_lib
+                    resp = req_lib.post(
+                        "https://api.anthropic.com/v1/messages",
+                        headers={"Content-Type":"application/json"},
+                        json={
+                            "model":"claude-sonnet-4-20250514",
+                            "max_tokens":800,
+                            "messages":[{"role":"user","content":prompt}]
+                        }, timeout=30
+                    )
+                    if resp.status_code == 200:
+                        analysis = resp.json()["content"][0]["text"]
+                        st.markdown(f"""
+                        <div style="background:#0f172a;border:1.5px solid #00d4ff;
+                                    border-radius:12px;padding:16px;margin-top:8px">
+                          <div style="color:#00d4ff;font-weight:700;margin-bottom:8px">
+                            🤖 Claude AI 분석
+                          </div>
+                          <div style="color:#e8eaf6;font-size:.84rem;line-height:1.9;
+                                      white-space:pre-wrap">{analysis}</div>
+                        </div>""", unsafe_allow_html=True)
+                    else:
+                        st.error(f"AI 분석 실패 (상태코드: {resp.status_code})")
+                except Exception as e:
+                    st.error(f"AI 연결 오류: {e}")
     else:
-        st.info("뉴스 데이터를 가져올 수 없습니다.")
+        st.info("뉴스 데이터 없음 — 잠시 후 다시 시도하세요.")
     st.markdown("---")
 
     # ════════════════════════════════════════════════════════════
