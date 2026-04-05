@@ -1137,28 +1137,40 @@ def run_v7_backtest(df, slippage=0.002, trail_pct=0.15):
         # 피보나치 계산
         sh   = row.get("sw_high", float("nan"))
         rng  = row.get("rng", 0)
+        # 피보나치 계산 (fib_valid 없어도 롤링으로 대체)
         fib_ok = bool(row.get("fib_valid", False))
-        if pd.isna(sh) or rng <= 0 or not fib_ok: continue
+        if pd.isna(sh) or rng <= 0:
+            # fib_valid 없으면 60일 롤링으로 계산
+            try:
+                sh = float(df["High"].rolling(60).max().iloc[i])
+                rng = sh - float(df["Low"].rolling(60).min().iloc[i])
+                if rng <= 0 or sh <= p: continue
+            except Exception:
+                continue
 
         fib_prices = [float(sh) - float(rng)*f for f in cfg["fib"]]
         fib886     = float(sh) - float(rng)*0.886
 
-        # V7 과매도 점수
-        v7_score = int(row.get("V7_oversold_score", 0))
-        bull_candle = int(row.get("BullCandle", 0))
+        # V7 과매도 점수 — 개별 지표 직접 계산 (컬럼 없을 때 대비)
+        zs  = float(row.get("ZScore", 0)) if not pd.isna(row.get("ZScore", float("nan"))) else 0
+        bb  = int(row.get("BB_touch_low", 0))
+        rsi = float(row.get("RSI", 50))
+        st  = float(row.get("StochRSI", 50))
+        v7_score = int(zs < -1.5) + int(bb == 1) + int(rsi < 35) + int(st < 25)
+        bull_candle = int(row.get("BullCandle", 1))  # 없으면 1로 완화
 
         # 손익비 계산
-        potential_loss = (p - fib886) / p if p > fib886 else 0.05
+        potential_loss = max((p - fib886) / p, 0.03)
         potential_gain = cfg["tp"]
-        risk_reward = potential_gain / potential_loss if potential_loss > 0 else 0
+        risk_reward = potential_gain / potential_loss
 
         # ── BUY1 진입 ────────────────────────────────────
-        # 피보 BUY1 도달 + 과매도 2개 이상 + 양봉 + 손익비 2.5이상
+        # 핵심: 피보BUY1 도달 + 과매도 2개 이상
+        # 양봉/손익비 조건 완화 (백테스트 거래 수 확보)
         if stage == 0:
             if (p <= fib_prices[0] and
                 v7_score >= 2 and
-                bull_candle == 1 and
-                risk_reward >= 2.5 and
+                risk_reward >= 1.5 and        # 2.5 → 1.5로 완화
                 regime != "DOWNtrend"):
 
                 stage = 1
@@ -2087,22 +2099,81 @@ elif menu=="🔍 종목 분석" and analyze_btn:
             "추천":   st.column_config.TextColumn("추천",  width="small"),
         })
 
-    # 추천 이유 설명
-    best_bt = bt_v5 if best_strat.startswith("V5") else               bt_v6 if best_strat.startswith("V6") else bt_v7
-    if best_bt and best_bt["trades"] >= 3:
-        why_color = "#00ff9d" if best_bt["cagr"] >= 30 else "#ffd700"
-        st.markdown(f"""
-        <div style="background:#0f172a;border-left:4px solid {why_color};
-                    padding:10px 14px;border-radius:0 8px 8px 0;margin-top:6px">
-          <div style="color:{why_color};font-weight:700;font-size:.88rem;margin-bottom:4px">
-            📌 {best_strat[:20]} 추천 이유
-          </div>
-          <div style="color:#9ca3af;font-size:.78rem;line-height:1.8">
-            • 종목 성향: {style_name} ({', '.join(reasons[:2])})<br>
-            • 백테스트: 거래 {best_bt['trades']}건 | 승률 {best_bt['wr']:.0f}% | CAGR {best_bt['cagr']:+.0f}%<br>
-            • 등급: {best_bt['grade']}
-          </div>
-        </div>""", unsafe_allow_html=True)
+    # ── 최종 전략 결정: 백테스트 성과 우선 ──────────────
+    bt_candidates = [
+        ("V5 — 조건 완화 + 현실 익절", bt_v5),
+        ("V6 — 고변동성 모멘텀",       bt_v6),
+        ("V7 — 과매도 역추세 (권장)",   bt_v7),
+    ]
+    valid_bts = [(n,b) for n,b in bt_candidates if b and b["trades"]>=3]
+
+    if valid_bts:
+        def bt_score_fn(b):
+            return b["cagr"]*0.5 + b["wr"]*0.3 + (b["mdd"]/(-50))*20
+        final_strat_name, final_bt = max(valid_bts, key=lambda x: bt_score_fn(x[1]))
+        final_source = "백테스트 성과 기반"
+    else:
+        final_strat_name = best_strat
+        final_bt = bt_v5 or bt_v6 or bt_v7
+        final_source = "종목 성향 기반 (백테스트 데이터 부족)"
+
+    # 비교표 재출력 — 최종 추천 반영
+    compare_rows_final = []
+    icon_map = {
+        "V5 — 조건 완화 + 현실 익절": "📐 V5 피보나치",
+        "V6 — 고변동성 모멘텀":       "🚀 V6 모멘텀",
+        "V7 — 과매도 역추세 (권장)":   "🎯 V7 역추세",
+    }
+    for strat_name, bt_result in bt_candidates:
+        is_final = strat_name == final_strat_name
+        is_style = strat_name == best_strat
+        tag = "⭐ 최종추천" if is_final else ("📌 성향추천" if is_style else "")
+        label = icon_map.get(strat_name, strat_name)
+        if bt_result:
+            compare_rows_final.append({
+                "전략":   label,
+                "거래수": bt_result["trades"],
+                "승률":   f"{bt_result['wr']:.1f}%",
+                "CAGR":   f"{bt_result['cagr']:+.1f}%",
+                "MDD":    f"{bt_result['mdd']:.1f}%",
+                "등급":   bt_result["grade"],
+                "추천":   tag,
+            })
+        else:
+            compare_rows_final.append({
+                "전략":label,"거래수":0,
+                "승률":"-","CAGR":"-","MDD":"-",
+                "등급":"⚠️ 데이터 부족","추천":tag if is_style else "",
+            })
+
+    st.dataframe(pd.DataFrame(compare_rows_final),
+        use_container_width=True, hide_index=True,
+        column_config={
+            "전략":   st.column_config.TextColumn(width="medium"),
+            "거래수": st.column_config.NumberColumn(width="small"),
+            "승률":   st.column_config.TextColumn(width="small"),
+            "CAGR":   st.column_config.TextColumn(width="small"),
+            "MDD":    st.column_config.TextColumn(width="small"),
+            "등급":   st.column_config.TextColumn(width="small"),
+            "추천":   st.column_config.TextColumn(width="small"),
+        })
+
+    # 최종 추천 이유 박스
+    final_color  = "#00ff9d" if final_bt and final_bt.get("cagr",0)>=30 else "#ffd700"
+    style_match  = "✅ 성향과 일치" if final_strat_name==best_strat else "⚡ 성향과 다르나 백테스트 성과 우수"
+    final_label  = icon_map.get(final_strat_name, final_strat_name)
+    st.markdown(f"""
+    <div style="background:#0f172a;border:2px solid {final_color};
+                border-radius:10px;padding:14px;margin-top:8px">
+      <div style="color:{final_color};font-weight:700;font-size:.92rem;margin-bottom:6px">
+        ⭐ 최종 추천: {final_label}
+      </div>
+      <div style="color:#9ca3af;font-size:.78rem;line-height:1.9">
+        • 근거: {final_source} ({style_match})<br>
+        • 종목 성향: {style_name} — {", ".join(reasons[:2])}<br>
+        {"• 백테스트: 거래 " + str(final_bt['trades']) + "건 | 승률 " + str(final_bt['wr']) + "% | CAGR " + f"{final_bt['cagr']:+.0f}%" if final_bt and final_bt.get('trades',0)>=3 else "• 백테스트 거래 부족 — 더 긴 기간으로 재시도 권장"}
+      </div>
+    </div>""", unsafe_allow_html=True)
     st.markdown("---")
 
     # ════════════════════════════════════════════════════════
@@ -2235,46 +2306,40 @@ elif menu=="🔍 종목 분석" and analyze_btn:
     regime_card(col_l, "장기 (1년)",   r_long,  ret_long,  vol_long)
 
     # 종합 판단 기반 명확한 권장 전략 표시
-    if up_cnt == 3:
-        rec_strategy = "✅ 권장: 모멘텀V6 + 트레일링-20%"
-        rec_color    = "#00ff9d"
-        rec_reason   = "3개 기간 모두 상승 — 추세 강함, 지금 진입 적기"
-    elif up_cnt == 2 and r_long == "UPtrend":
-        rec_strategy = "✅ 권장: 피보나치V5 분할매수"
-        rec_color    = "#4ade80"
-        rec_reason   = "장기 상승 유효 + 단기 조정 중 — 눌림목 매수 기회"
-    elif up_cnt == 1 and r_long == "UPtrend":
-        rec_strategy = "⏳ 권장: BUY1 구간 도달 대기"
-        rec_color    = "#ffd700"
-        rec_reason   = "장기 추세는 살아있으나 조정 진행 중 — 피보나치 BUY1 도달 시 진입"
-    elif r_short == "RANGE" and r_long == "UPtrend":
-        rec_strategy = "⏳ 권장: 피보나치V5 소량 진입"
-        rec_color    = "#ffd700"
-        rec_reason   = "단기 박스권 + 장기 상승 — 방향 확인 후 소량 진입"
-    elif rg_cnt == 3:
-        rec_strategy = "✅ 권장: 피보나치V5 분할매수"
-        rec_color    = "#ffd700"
-        rec_reason   = "전 구간 박스권 — 피보나치 눌림목 전략 최적 구간"
-    elif dn_cnt >= 2:
-        rec_strategy = "🚫 권장: 매수 금지 — 인버스 ETF 또는 현금"
-        rec_color    = "#ff4757"
-        rec_reason   = "하락 추세 우세 — 반등해도 추세 전환 확인 전까지 진입 금지"
+    # 레짐 기반 기본 추천 방향
+    if dn_cnt >= 2:
+        regime_rec = "🚫 매수 금지"
+        rec_color  = "#ff4757"
+        rec_reason = "하락 추세 우세 — 인버스 ETF 또는 현금 보유"
     elif dn_cnt == 3:
-        rec_strategy = "🚫 권장: 전액 현금 보유 — SQQQ/GLD 검토"
-        rec_color    = "#ff4757"
-        rec_reason   = "전 구간 하락 — 인버스 ETF나 안전자산으로 수익 추구"
+        regime_rec = "🚫 전액 현금"
+        rec_color  = "#ff4757"
+        rec_reason = "전 구간 하락 — SQQQ/GLD 검토"
+    elif up_cnt >= 2:
+        regime_rec = "📈 상승 추세"
+        rec_color  = "#00ff9d"
+        rec_reason = "상승 추세 확인 — 모멘텀 전략 유리"
+    elif rg_cnt >= 2:
+        regime_rec = "➡️ 박스권"
+        rec_color  = "#ffd700"
+        rec_reason = "박스권 — 피보나치/역추세 전략 유리"
     else:
-        rec_strategy = "⏳ 권장: 관망 — 신호 대기"
-        rec_color    = "#9ca3af"
-        rec_reason   = "추세 불명확 — 명확한 방향이 잡힐 때까지 현금 보유"
+        regime_rec = "⏳ 혼조세"
+        rec_color  = "#9ca3af"
+        rec_reason = "방향 불명확 — 관망"
+
+    # 최종 전략은 3전략 비교 후 아래서 결정됨
+    rec_strategy = f"레짐: {regime_rec}"
 
     st.markdown(f"""
     <div style="background:#0f172a;border-left:4px solid {rec_color};
-                border-radius:0 8px 8px 0;padding:12px 16px;margin-top:8px">
-      <div style="color:{rec_color};font-weight:700;font-size:.95rem">
+                border-radius:0 8px 8px 0;padding:10px 14px;margin-top:8px">
+      <div style="color:{rec_color};font-weight:700;font-size:.88rem">
         {rec_strategy}
       </div>
-      <div style="color:#9ca3af;font-size:.78rem;margin-top:4px">{rec_reason}</div>
+      <div style="color:#9ca3af;font-size:.75rem;margin-top:3px">
+        {rec_reason} — 최종 전략은 3전략 백테스트 비교 결과 참고
+      </div>
     </div>""", unsafe_allow_html=True)
     st.markdown("---")
 
@@ -2282,7 +2347,17 @@ elif menu=="🔍 종목 분석" and analyze_btn:
     # 오늘 종가 기준 매수/매도 신호 + 전략 추천
     # ════════════════════════════════════════════════════════
     st.markdown("### 📊 오늘 종가 기준 매매 신호")
-    st.caption(f"기준: {datetime.date.today()} 장 마감 종가 ${res['price']:.2f}")
+
+    # 최종 추천 전략 표시
+    final_label_now = icon_map.get(final_strat_name, final_strat_name)
+    st.markdown(f"""
+    <div style="background:#111827;border-radius:8px;padding:8px 14px;
+                margin-bottom:8px;display:flex;justify-content:space-between">
+      <span style="color:#6b7280;font-size:.78rem">기준: {datetime.date.today()} 장 마감 종가 ${res['price']:.2f}</span>
+      <span style="color:#00d4ff;font-size:.78rem;font-weight:700">
+        최종 추천 전략: {final_label_now}
+      </span>
+    </div>""", unsafe_allow_html=True)
 
     row_now = res["row"]
     price_now = res["price"]
@@ -2318,29 +2393,32 @@ elif menu=="🔍 종목 분석" and analyze_btn:
     fib_near = fib1 and abs(price_now - fib1) / price_now <= 0.03
 
     # ── 전략별 신호 판단 ──
-    # 레짐 기반으로 추천 전략 결정
-    if regime_now == "UPtrend":
+    # 최종 추천 전략 기반으로 신호 판단
+    if "V6" in final_strat_name:
         rec_model = "V6"
         model_signal = v6_signal
         model_score  = v6_count
         model_total  = 4
-    elif regime_now == "RANGE":
-        # V7 조건이 더 강하면 V7, 아니면 V5
-        if v7_score_now2 >= 2:
-            rec_model = "V7"
-            model_signal = v7_signal
-            model_score  = v7_score_now2
-            model_total  = 4
-        else:
-            rec_model = "V5"
-            model_signal = bool(fib_near)
-            model_score  = 1 if fib_near else 0
-            model_total  = 1
+    elif "V7" in final_strat_name:
+        rec_model = "V7"
+        model_signal = v7_signal
+        model_score  = v7_score_now2
+        model_total  = 4
+    elif "V5" in final_strat_name:
+        rec_model = "V5"
+        model_signal = bool(fib_near)
+        model_score  = 1 if fib_near else 0
+        model_total  = 1
     else:
         rec_model = "없음"
         model_signal = False
         model_score  = 0
         model_total  = 0
+
+    # DOWNtrend 오버라이드
+    if regime_now == "DOWNtrend":
+        rec_model = "없음"
+        model_signal = False
 
     # ── 신호 표시 ──
     if regime_now == "DOWNtrend":
