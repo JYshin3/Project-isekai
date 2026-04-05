@@ -1863,36 +1863,73 @@ with st.sidebar:
             label_visibility="collapsed",
         )
         st.markdown("---")
-        # V6 선택 시 간단 설명
-        if bt_version == "V6 — 고변동성 모멘텀":
+
+        # ── 전략별 설정 분기 ──────────────────────────────
+        if bt_version == "V7 — 과매도 역추세 (권장)":
+            st.markdown("""
+            <div style="background:#001a1a;border:1px solid #00d4ff;
+                        border-radius:8px;padding:10px;font-size:.76rem;
+                        color:#00d4ff;line-height:1.7">
+            🎯 <b>V7 과매도 역추세</b><br>
+            진입: 피보BUY1 + 과매도 4조건 중 2개<br>
+            ① Z-Score &lt; -1.5<br>
+            ② 볼린저밴드 하단 터치<br>
+            ③ RSI &lt; 35<br>
+            ④ StochRSI &lt; 25<br>
+            물타기 금지 / 불타기만 허용<br>
+            슬리피지 0.2% 반영
+            </div>""", unsafe_allow_html=True)
+            bt_score_thr = 0    # AI 점수 미사용
+            st.caption("✅ AI 점수 비사용 | 물타기 자동 금지")
+            bt_trailing  = st.toggle("트레일링 스탑", value=True,
+                                     key="bt_trail_v7",
+                                     help="V7 권장: ON (-15%)")
+            if bt_trailing:
+                bt_trail_pct = st.slider(
+                    "트레일링 폭 (%)", 5, 25, 15, 1,
+                    key="bt_pct_v7") / 100
+            else:
+                bt_trail_pct = 0.15
+
+        elif bt_version == "V6 — 고변동성 모멘텀":
             st.markdown("""
             <div style="background:#1a0f00;border:1px solid #ff8c00;
                         border-radius:8px;padding:10px;font-size:.76rem;
                         color:#ffd700;line-height:1.7">
-            🔥 <b>모멘텀 전략</b><br>
+            🔥 <b>V6 모멘텀 전략</b><br>
             진입: 4개 중 3개 충족<br>
             ① MA20 > MA60<br>
             ② RSI 45~68<br>
             ③ MACD 양수<br>
             ④ 거래량 1.3배↑<br>
-            익절: +10% / 손절: -5%
+            손절: -5% / 익절: 트레일링 권장
             </div>""", unsafe_allow_html=True)
+            bt_score_thr = 50
+            bt_trailing  = st.toggle("트레일링 스탑", value=True,
+                                     key="bt_trail_v6",
+                                     help="V6 권장: ON (-20%)")
+            if bt_trailing:
+                bt_trail_pct = st.slider(
+                    "트레일링 폭 (%)", 5, 25, 20, 1,
+                    key="bt_pct_v6") / 100
+            else:
+                bt_trail_pct = 0.20
+
         else:
+            # V1~V5
             st.markdown("**⚙️ 세부 파라미터**")
             bt_score_thr = st.slider(
-                "AI 점수 기준 (%)", 25, 65, 40, 5,
+                "AI 점수 기준 (%)", 0, 65, 40, 5,
                 help="낮을수록 거래 많아짐")
-        if bt_version == "V6 — 고변동성 모멘텀":
-            bt_score_thr = 50  # V6는 고정
-        bt_trailing = st.toggle(
-            "트레일링 스탑",
-            value=False,
-            help="ON: 최고점 대비 하락 시 청산")
-        if bt_trailing:
-            bt_trail_pct = st.slider(
-                "트레일링 폭 (%)", 5, 20, 10, 1) / 100
-        else:
-            bt_trail_pct = 0.10
+            bt_trailing = st.toggle(
+                "트레일링 스탑", value=False,
+                help="ON: 최고점 대비 하락 시 청산")
+            if bt_trailing:
+                bt_trail_pct = st.slider(
+                    "트레일링 폭 (%)", 5, 25, 10, 1) / 100
+            else:
+                bt_trail_pct = 0.10
+
         st.markdown("---")
         bt_btn=st.button("🧪 백테스트 실행",
             use_container_width=True, type="primary")
@@ -4483,11 +4520,12 @@ StochRSI:   {res["cfg"]["stoch"]} 이하
 
 --- 백테스트 설정 ---
 전략 버전:      {bt_version}
-진입 방식:      {"2/3 완화" if ver_cfg["buy_logic"]=="2of3" else "모멘텀 추격" if ver_cfg["buy_logic"]=="momentum" else "3/3 엄격"}
-AI 점수 기준:   {bt_score_thr}%
+진입 방식:      {"과매도 2/4이상 + 피보BUY1" if ver_cfg.get("strategy_type")=="v7" else "2/3 완화" if ver_cfg["buy_logic"]=="2of3" else "모멘텀 추격" if ver_cfg["buy_logic"]=="momentum" else "3/3 엄격"}
+AI 점수 기준:   {"비사용" if ver_cfg.get("strategy_type")=="v7" else f"{bt_score_thr}%"}
 레짐 필터:      {"ON" if ver_cfg["use_regime"] else "OFF"}
-StochRSI 필터: {"ON" if ver_cfg["use_stoch"] else "OFF"}
-물타기/불타기:  {"ON" if ver_cfg["use_bull_bear"] else "OFF"}
+StochRSI 필터: {"비사용 (V7 자체 조건 사용)" if ver_cfg.get("strategy_type")=="v7" else "ON" if ver_cfg["use_stoch"] else "OFF"}
+물타기/불타기:  {"금지 (불타기만)" if ver_cfg.get("strategy_type")=="v7" else "ON" if ver_cfg["use_bull_bear"] else "OFF"}
+슬리피지:       {"0.2% 반영" if ver_cfg.get("strategy_type")=="v7" else "미반영"}
 익절 방식:      {"트레일링" if bt_trailing else "고정"}
 트레일링 폭:    {f"-{bt_trail_pct*100:.0f}%" if bt_trailing else "N/A"}
 ============================="""
