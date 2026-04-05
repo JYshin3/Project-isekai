@@ -1631,7 +1631,48 @@ elif menu=="🔍 종목 분석" and analyze_btn:
     regime_card(col_m, "중기 (3개월)", r_mid,   ret_mid,   vol_mid)
     regime_card(col_l, "장기 (1년)",   r_long,  ret_long,  vol_long)
 
-    st.caption("💡 단기↑+중기↑ → 모멘텀V6 트레일링 | 단기↓+장기↑ → 피보나치 눌림목 매수 | 전부↓ → 인버스 ETF")
+    # 종합 판단 기반 명확한 권장 전략 표시
+    if up_cnt == 3:
+        rec_strategy = "✅ 권장: 모멘텀V6 + 트레일링-20%"
+        rec_color    = "#00ff9d"
+        rec_reason   = "3개 기간 모두 상승 — 추세 강함, 지금 진입 적기"
+    elif up_cnt == 2 and r_long == "UPtrend":
+        rec_strategy = "✅ 권장: 피보나치V5 분할매수"
+        rec_color    = "#4ade80"
+        rec_reason   = "장기 상승 유효 + 단기 조정 중 — 눌림목 매수 기회"
+    elif up_cnt == 1 and r_long == "UPtrend":
+        rec_strategy = "⏳ 권장: BUY1 구간 도달 대기"
+        rec_color    = "#ffd700"
+        rec_reason   = "장기 추세는 살아있으나 조정 진행 중 — 피보나치 BUY1 도달 시 진입"
+    elif r_short == "RANGE" and r_long == "UPtrend":
+        rec_strategy = "⏳ 권장: 피보나치V5 소량 진입"
+        rec_color    = "#ffd700"
+        rec_reason   = "단기 박스권 + 장기 상승 — 방향 확인 후 소량 진입"
+    elif rg_cnt == 3:
+        rec_strategy = "✅ 권장: 피보나치V5 분할매수"
+        rec_color    = "#ffd700"
+        rec_reason   = "전 구간 박스권 — 피보나치 눌림목 전략 최적 구간"
+    elif dn_cnt >= 2:
+        rec_strategy = "🚫 권장: 매수 금지 — 인버스 ETF 또는 현금"
+        rec_color    = "#ff4757"
+        rec_reason   = "하락 추세 우세 — 반등해도 추세 전환 확인 전까지 진입 금지"
+    elif dn_cnt == 3:
+        rec_strategy = "🚫 권장: 전액 현금 보유 — SQQQ/GLD 검토"
+        rec_color    = "#ff4757"
+        rec_reason   = "전 구간 하락 — 인버스 ETF나 안전자산으로 수익 추구"
+    else:
+        rec_strategy = "⏳ 권장: 관망 — 신호 대기"
+        rec_color    = "#9ca3af"
+        rec_reason   = "추세 불명확 — 명확한 방향이 잡힐 때까지 현금 보유"
+
+    st.markdown(f"""
+    <div style="background:#0f172a;border-left:4px solid {rec_color};
+                border-radius:0 8px 8px 0;padding:12px 16px;margin-top:8px">
+      <div style="color:{rec_color};font-weight:700;font-size:.95rem">
+        {rec_strategy}
+      </div>
+      <div style="color:#9ca3af;font-size:.78rem;margin-top:4px">{rec_reason}</div>
+    </div>""", unsafe_allow_html=True)
     st.markdown("---")
 
     # ── 종목 유형 자동 감지 + 권장 전략 배너 ──
