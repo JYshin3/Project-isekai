@@ -2897,7 +2897,24 @@ elif menu=="🔍 종목 분석" and analyze_btn:
     if ma200g_a > 0:               mom_fit_a += 20
     mom_fit_a = min(100, mom_fit_a)
 
-    best_strat_a  = "피보나치V5" if fib_fit_a >= mom_fit_a else "모멘텀V6"
+    # V7 역추세 적합도
+    v7_fit_a = 0
+    if res["regime"] == "RANGE":           v7_fit_a += 30
+    if -40 <= draw52_a <= -8:              v7_fit_a += 30
+    if "ZScore" in res["df"].columns:
+        zs_now = float(res["df"]["ZScore"].dropna().iloc[-1])
+        if zs_now < -1.5:                  v7_fit_a += 25
+    if "BB_touch_low" in res["df"].columns:
+        bb_cnt = int(res["df"]["BB_touch_low"].tail(60).sum())
+        if bb_cnt >= 5:                    v7_fit_a += 15
+    v7_fit_a = min(100, v7_fit_a)
+
+    # 3전략 중 성향 기반 최고 점수
+    best_strat_a = (
+        "V7역추세" if v7_fit_a > fib_fit_a and v7_fit_a > mom_fit_a
+        else "피보나치V5" if fib_fit_a >= mom_fit_a
+        else "모멘텀V6"
+    )
     fit_score_a   = max(fib_fit_a, mom_fit_a)
     if fit_score_a >= 80:   fit_grade_a = "🏆 최적"
     elif fit_score_a >= 60: fit_grade_a = "✅ 적합"
@@ -2923,7 +2940,7 @@ elif menu=="🔍 종목 분석" and analyze_btn:
           </div>
         </div>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;
+      <div style="display:grid;grid-template-columns:1fr 1fr;
                   gap:8px;margin-top:12px">
         <div style="background:#111827;border-radius:8px;padding:8px;text-align:center">
           <div style="color:#6b7280;font-size:.7rem">52주 낙폭</div>
@@ -2942,23 +2959,27 @@ elif menu=="🔍 종목 분석" and analyze_btn:
             {'✅ 장기 상승' if ma200g_a > 0 else '❌ 장기 하락'}
           </div>
         </div>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;
+                  gap:8px;margin-top:8px">
         <div style="background:#111827;border-radius:8px;padding:8px;text-align:center">
-          <div style="color:#6b7280;font-size:.7rem">피보 적합도</div>
+          <div style="color:#6b7280;font-size:.7rem">📐 피보V5 적합</div>
           <div style="color:{'#00ff9d' if fib_fit_a>=60 else '#ffd700' if fib_fit_a>=40 else '#ff4757'};
                       font-weight:700">{fib_fit_a}점</div>
-          <div style="color:#6b7280;font-size:.66rem">피보나치V5</div>
+          <div style="color:#6b7280;font-size:.64rem">RANGE+눌림목</div>
         </div>
         <div style="background:#111827;border-radius:8px;padding:8px;text-align:center">
-          <div style="color:#6b7280;font-size:.7rem">모멘텀 적합도</div>
+          <div style="color:#6b7280;font-size:.7rem">🚀 V6모멘 적합</div>
           <div style="color:{'#00ff9d' if mom_fit_a>=60 else '#ffd700' if mom_fit_a>=40 else '#ff4757'};
                       font-weight:700">{mom_fit_a}점</div>
-          <div style="color:#6b7280;font-size:.66rem">모멘텀V6</div>
+          <div style="color:#6b7280;font-size:.64rem">UP+추세추격</div>
         </div>
-      </div>
-      <div style="color:#ffd700;font-size:.76rem;margin-top:10px;
-                  border-top:1px solid #1e2d4a;padding-top:8px">
-        📌 백테스트 탭에서 권장 전략으로 실행해보세요:
-        <b>{"V5 — 조건 완화 + 현실 익절" if best_strat_a=="피보나치V5" else "V6 — 고변동성 모멘텀"}</b>
+        <div style="background:#111827;border-radius:8px;padding:8px;text-align:center">
+          <div style="color:#6b7280;font-size:.7rem">🎯 V7역추 적합</div>
+          <div style="color:{'#00ff9d' if v7_fit_a>=60 else '#ffd700' if v7_fit_a>=40 else '#ff4757'};
+                      font-weight:700">{v7_fit_a}점</div>
+          <div style="color:#6b7280;font-size:.64rem">RANGE+과매도</div>
+        </div>
       </div>
     </div>""", unsafe_allow_html=True)
 
@@ -2977,102 +2998,114 @@ elif menu=="🔍 종목 분석" and analyze_btn:
     mcard(c6,"권장 행동",res["action"],sc)
     st.markdown("---")
 
-    # ── 매매 플랜 표 (계산 근거 포함) ──
+    # ── 매매 플랜 표 (최종 추천 전략 기반) ──
     st.markdown("#### 📋 매매 플랜")
 
-    # 피보나치 계산 근거 표시
-    row_data = res["row"]
-    sw_h = float(row_data["sw_high"]) if not pd.isna(row_data["sw_high"]) else None
-    sw_l = float(row_data["sw_low"])  if not pd.isna(row_data["sw_low"])  else None
-    rng_val = float(row_data["rng"]) if not pd.isna(row_data["rng"]) else None
-
-    if sw_h and sw_l and rng_val:
-        fib_basis_ok = sw_h > res["price"]
-        basis_color  = "#00ff9d" if fib_basis_ok else "#ff4757"
-        basis_msg    = "✅ 정상 (고점 → 되돌림 구간)" if fib_basis_ok else "⚠️ 현재가가 스윙 고점 위 — 피보나치 신뢰도 낮음"
+    if "V6" in final_strat_name:
+        # V6 모멘텀 플랜
+        entry_v6 = res["price"] * 1.002
+        stop_v6  = entry_v6 * 0.95
+        tp_v6    = entry_v6 * 1.10
         st.markdown(f"""
-        <div style="background:#111827;border:1px solid {basis_color};border-radius:8px;
+        <div style="background:#111827;border:1px solid #00ff9d;border-radius:8px;
                     padding:10px 14px;margin-bottom:10px;font-size:.82rem">
-          <b style="color:#e8eaf6">📐 피보나치 계산 근거</b><br>
-          <span style="color:#6b7280">스윙 고점:</span>
-          <span style="color:#00d4ff;font-family:monospace"> ${sw_h:.2f}</span> &nbsp;|&nbsp;
-          <span style="color:#6b7280">스윙 저점:</span>
-          <span style="color:#7b5ea7;font-family:monospace"> ${sw_l:.2f}</span> &nbsp;|&nbsp;
-          <span style="color:#6b7280">범위(Range):</span>
-          <span style="color:#ffd700;font-family:monospace"> ${rng_val:.2f}</span> &nbsp;|&nbsp;
-          <span style="color:#6b7280">현재가:</span>
-          <span style="color:#e8eaf6;font-family:monospace"> ${res["price"]:.2f}</span><br>
-          <span style="color:{basis_color}">{basis_msg}</span>
+          <b style="color:#00ff9d">🚀 V6 모멘텀 전략 매매 플랜</b><br>
+          <span style="color:#6b7280">진입 방식:</span>
+          <span style="color:#e8eaf6"> 조건 충족 시 내일 시가 매수 (분할매수 없음)</span><br>
+          <span style="color:#6b7280">기준가:</span>
+          <span style="color:#00d4ff;font-family:monospace"> ${res['price']:.2f} (오늘 종가)</span>
         </div>""", unsafe_allow_html=True)
+        plan_data = {
+            "구분":       ["진입가 (시가+슬리피지)", "손절선 (-5%)", "익절 목표 (+10%)", "트레일링 스탑"],
+            "목표가":     [f"${entry_v6:.2f}", f"${stop_v6:.2f}", f"${tp_v6:.2f}", "최고가 -20%"],
+            "현재가 대비":[f"+0.2%", f"-5.0%", f"+10.0%", "자동추적"],
+            "비고":       ["내일 시가에 지정가", "체결 즉시 설정", "고정 or 트레일링", "트레일링 권장"],
+        }
+
+    elif "V7" in final_strat_name:
+        # V7 역추세 플랜
+        b1 = res["fib_lv"][0]
+        b2 = res["fib_lv"][1]
+        b3 = res["fib_lv"][2]
+        st.markdown(f"""
+        <div style="background:#111827;border:1px solid #00d4ff;border-radius:8px;
+                    padding:10px 14px;margin-bottom:10px;font-size:.82rem">
+          <b style="color:#00d4ff">🎯 V7 역추세 전략 매매 플랜</b><br>
+          <span style="color:#6b7280">진입 조건:</span>
+          <span style="color:#e8eaf6"> 피보BUY1 + 과매도 2개 이상 + 양봉 확인</span><br>
+          <span style="color:#6b7280">물타기:</span>
+          <span style="color:#ff4757"> 금지</span>
+          <span style="color:#6b7280"> &nbsp;|&nbsp; 불타기:</span>
+          <span style="color:#00ff9d"> 모멘텀 회복 2개 이상 시만</span>
+        </div>""", unsafe_allow_html=True)
+        plan_data = {
+            "구분":       ["BUY1 지정가", "BUY2 (불타기만)", "BUY3 (불타기만)", "손절선 (-10%)", "익절 (+12%)"],
+            "목표가":     [
+                f"${b1:.2f}" if b1 else "대기 중",
+                f"${b2:.2f}" if b2 else "대기 중",
+                f"${b3:.2f}" if b3 else "대기 중",
+                f"${b1*0.90:.2f}" if b1 else "—",
+                f"${b1*1.12:.2f}" if b1 else "—",
+            ],
+            "현재가 대비":[
+                f"{(b1/res['price']-1)*100:+.1f}%" if b1 else "—",
+                f"{(b2/res['price']-1)*100:+.1f}%" if b2 else "—",
+                f"{(b3/res['price']-1)*100:+.1f}%" if b3 else "—",
+                f"{(b1*0.90/res['price']-1)*100:+.1f}%" if b1 else "—",
+                f"{(b1*1.12/res['price']-1)*100:+.1f}%" if b1 else "—",
+            ],
+            "비고": ["슬리피지 0.2% 포함", "모멘텀 회복 후", "모멘텀 회복 후", "평균단가 기준", "트레일링 -15%"],
+        }
+
     else:
-        st.warning("스윙 고점/저점 계산 불가 — 데이터 부족")
+        # V5 피보나치 플랜 (기존)
+        row_data = res["row"]
+        sw_h = float(row_data["sw_high"]) if not pd.isna(row_data["sw_high"]) else None
+        sw_l = float(row_data["sw_low"])  if not pd.isna(row_data["sw_low"])  else None
+        rng_val = float(row_data["rng"]) if not pd.isna(row_data["rng"]) else None
+        if sw_h and sw_l and rng_val:
+            fib_basis_ok = sw_h > res["price"]
+            basis_color  = "#00ff9d" if fib_basis_ok else "#ffd700"
+            basis_msg    = "✅ 정상 (고점 → 되돌림 구간)" if fib_basis_ok else "⚠️ 현재가가 스윙 고점 위 — 조정 후 구간 형성"
+            st.markdown(f"""
+            <div style="background:#111827;border:1px solid {basis_color};border-radius:8px;
+                        padding:10px 14px;margin-bottom:10px;font-size:.82rem">
+              <b style="color:#ffd700">📐 V5 피보나치 전략 매매 플랜</b><br>
+              <span style="color:#6b7280">스윙 고점:</span>
+              <span style="color:#00d4ff;font-family:monospace"> ${sw_h:.2f}</span> &nbsp;|&nbsp;
+              <span style="color:#6b7280">스윙 저점:</span>
+              <span style="color:#7b5ea7;font-family:monospace"> ${sw_l:.2f}</span> &nbsp;|&nbsp;
+              <span style="color:#6b7280">범위:</span>
+              <span style="color:#ffd700;font-family:monospace"> ${rng_val:.2f}</span><br>
+              <span style="color:{basis_color}">{basis_msg}</span>
+            </div>""", unsafe_allow_html=True)
+        if all(f is None for f in res["fib_lv"]):
+            st.warning("⚠️ 피보나치 매수 구간 미형성 — 조정 후 재분석")
+        plan_data = {
+            "구분":       ["1차 매수 (BUY1)", "2차 매수 (BUY2)", "3차 매수 (BUY3)", "손절선", "익절 목표"],
+            "목표가":     [
+                f"${res['fib_lv'][0]:.2f}" if res["fib_lv"][0] else "대기 중",
+                f"${res['fib_lv'][1]:.2f}" if res["fib_lv"][1] else "대기 중",
+                f"${res['fib_lv'][2]:.2f}" if res["fib_lv"][2] else "대기 중",
+                f"${res['stop_s']:.2f}" if res["stop_s"] else "—",
+                f"${res['tp_s']:.2f}"   if res["tp_s"]   else "—",
+            ],
+            "현재가 대비":[
+                f"{(res['fib_lv'][0]/res['price']-1)*100:+.1f}%" if res["fib_lv"][0] else "—",
+                f"{(res['fib_lv'][1]/res['price']-1)*100:+.1f}%" if res["fib_lv"][1] else "—",
+                f"{(res['fib_lv'][2]/res['price']-1)*100:+.1f}%" if res["fib_lv"][2] else "—",
+                f"{(res['stop_s']/res['price']-1)*100:+.1f}%"    if res["stop_s"]    else "—",
+                f"{(res['tp_s']/res['price']-1)*100:+.1f}%"      if res["tp_s"]      else "—",
+            ],
+            "비고": ["30% 진입", "35% 추가", "35% 추가", "전량 손절", f"레짐:{res['regime']}"],
+        }
 
-    # 모든 상황에서 매매 플랜 표 표시
-    # (피보나치 계산 불가 시에도 상태와 이유를 명확히 표시)
-    all_none = all(f is None for f in res["fib_lv"])
-    if all_none:
-        st.warning("⚠️ 피보나치 매수 대기 구간: 현재가가 최근 스윙 고점 위에 있습니다. 조정 후 진입 구간이 생성됩니다.")
-
-    # 사용된 스윙 정보 (analyze에서 반환된 값 활용)
-    sw_h_used   = res.get("sw_h_used",   sw_h)
-    rng_used    = res.get("rng_used",    rng_val)
-
-    def fmt_price(f):
-        return f"${f:.2f}" if f else "대기 중"
-    def fmt_dist(f, price):
-        if not f: return "—"
-        d = (f/price-1)*100
-        return f"{d:+.1f}%"
-    def fmt_calc(f_lvl, sh, rng):
-        if not sh or not rng: return "-"
-        return f"${sh:.2f} - ${rng:.2f}×{f_lvl}"
-
-    plan_data={
-        "구분":["1차 매수 (BUY1)","2차 매수 (BUY2)","3차 매수 (BUY3)","손절선","익절 목표"],
-        "목표가":[
-            fmt_price(res["fib_lv"][0]),
-            fmt_price(res["fib_lv"][1]),
-            fmt_price(res["fib_lv"][2]),
-            fmt_price(res["stop_s"]),
-            fmt_price(res["tp_s"]),
-        ],
-        "현재가 대비":[
-            fmt_dist(res["fib_lv"][0], res["price"]),
-            fmt_dist(res["fib_lv"][1], res["price"]),
-            fmt_dist(res["fib_lv"][2], res["price"]),
-            fmt_dist(res["stop_s"],    res["price"]),
-            fmt_dist(res["tp_s"],      res["price"]),
-        ],
-        "계산식":[
-            fmt_calc(res["cfg"]["fib"][0], sw_h_used, rng_used),
-            fmt_calc(res["cfg"]["fib"][1], sw_h_used, rng_used),
-            fmt_calc(res["cfg"]["fib"][2], sw_h_used, rng_used),
-            f"평균단가 × {1-res['cfg']['stop']:.2f}",
-            f"평균단가 × {1+res['cfg']['tp']:.2f}",
-        ],
-        "상태":[
-            "⏳ 대기" if not res["fib_lv"][0] else "✅ 유효",
-            "⏳ 대기" if not res["fib_lv"][1] else "✅ 유효",
-            "⏳ 대기" if not res["fib_lv"][2] else "✅ 유효",
-            "✅" if res["stop_s"] else "—",
-            "✅" if res["tp_s"]   else "—",
-        ],
-        "설명":[
-            f"Fib {res['cfg']['fib'][0]} — 1차 진입 (30%)",
-            f"Fib {res['cfg']['fib'][1]} — 2차 추가 (35%)",
-            f"Fib {res['cfg']['fib'][2]} — 3차 추가 (35%)",
-            f"손절 -{res['cfg']['stop']*100:.0f}% / Fib 0.886 중 높은 값",
-            f"익절 +{res['cfg']['tp']*100:.0f}% 전량 청산",
-        ]
-    }
     st.dataframe(pd.DataFrame(plan_data), use_container_width=True, hide_index=True,
         column_config={
-            "구분":        st.column_config.TextColumn("구분",       width="medium"),
-            "목표가":      st.column_config.TextColumn("목표가",     width="small"),
-            "현재가 대비": st.column_config.TextColumn("현재가 대비",width="small"),
-            "계산식":      st.column_config.TextColumn("계산식",     width="medium"),
-            "상태":        st.column_config.TextColumn("상태",       width="small"),
-            "설명":        st.column_config.TextColumn("설명",       width="large"),
+            "구분":        st.column_config.TextColumn(width="medium"),
+            "목표가":      st.column_config.TextColumn(width="small"),
+            "현재가 대비": st.column_config.TextColumn(width="small"),
+            "비고":        st.column_config.TextColumn(width="medium"),
         })
 
     # ── 내일 지정가 주문 가격표 (최종 전략 기반) ────────────
