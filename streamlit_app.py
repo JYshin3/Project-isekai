@@ -727,7 +727,16 @@ def analyze(ticker, period="1y"):
     try:
         # MA200 계산 + 백테스트에 최소 252봉 필요
         # 1y = 252봉 → START=200 이후 거래 구간 52봉뿐 → 자동 2y 확장
-        actual_period = "2y" if period in ["6mo","1y"] else period
+        # 백테스트 정확도를 위해 최소 2y 확보
+        # MA200(1년) + 백테스트 실행 구간 필요
+        if period in ["6mo","1y"]:
+            actual_period = "2y"
+        elif period == "3y":
+            actual_period = "3y"
+        elif period == "5y":
+            actual_period = "5y"
+        else:
+            actual_period = "2y"
         df=yf.download(ticker,period=actual_period,interval="1d",auto_adjust=True,progress=False)
         if df.empty or len(df)<80: return None
         if isinstance(df.columns,pd.MultiIndex): df.columns=df.columns.get_level_values(0)
@@ -1827,7 +1836,7 @@ with st.sidebar:
     if menu in ["🔍 종목 분석","📊 백테스트"]:
         ticker_input=st.text_input("티커 입력",value="AAPL",
             placeholder="예: AAPL, TSLA, NVDA").upper().strip()
-        period_input=st.selectbox("기간",["6mo","1y","2y","3y"],index=1)
+        period_input=st.selectbox("기간",["6mo","1y","2y","3y","5y"],index=2)
     if menu=="🤖 AI 종목 추천":
         st.markdown("**스캔 방식 선택**")
         scan_mode = st.radio("",
@@ -2045,7 +2054,8 @@ elif menu=="🔍 종목 분석" and analyze_btn:
     # ✅ 항상 2y 데이터로 받아서 멀티 기간 분석
     with st.spinner(f"📡 {ticker_input} 데이터 수집 중..."):
         analyze.clear()
-        res = analyze(ticker_input, "2y")  # 항상 2y — 멀티 기간 분석용
+        # 백테스트 기간은 사용자 선택 따름 (최소 2y 자동 확보)
+        res = analyze(ticker_input, period_input)
     if res is None:
         st.error("데이터를 가져올 수 없습니다. 티커를 확인하세요."); st.stop()
 
@@ -4474,7 +4484,7 @@ elif menu=="📊 백테스트" and bt_btn:
         copy_text = f"""=== 프로젝트 이세계 백테스트 결과 ===
 종목: {ticker_input}
 분석일: {datetime.datetime.now().strftime("%Y-%m-%d")}
-기간: {period_input} (실제 2년 데이터 사용)
+기간: {period_input} (실제 {"2년" if period_input in ["6mo","1y"] else period_input.replace("y","년").replace("mo","개월")} 데이터 사용)
 종목 유형: {ticker_type}
 적용 전략: {actual_strategy}
 전략 버전: {bt_version}
