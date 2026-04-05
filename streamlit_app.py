@@ -551,33 +551,61 @@ def scan_single(ticker):
                 dist_pct    = (nearest_fib / price - 1) * 100
                 fib_score   = max(0, min(100, 100 + dist_pct * 5))
 
-        # ── 신호 결정 ────────────────────────────────────
+        # ── V7 과매도 점수 계산 ──────────────────────────
+        zscore_v = float(row.get("ZScore", 0)) if not pd.isna(row.get("ZScore", float("nan"))) else 0
+        bb_low_v = int(row.get("BB_touch_low", 0))
+        rsi_v    = float(row.get("RSI", 50))
+        stoch_v  = float(row.get("StochRSI", 50))
+        bull_c_v = int(row.get("BullCandle", 0))
+        v7_score = (
+            int(zscore_v < -2) +
+            int(bb_low_v == 1) +
+            int(rsi_v < 30) +
+            int(stoch_v < 20)
+        )
+        v7_ready = (v7_score >= 2) and (bull_c_v == 1)
+
+        # ── 레짐별 전략 자동 매칭 ───────────────────────
         if regime == "DOWNtrend":
-            # 하락장이지만 반등 모멘텀 있으면 참고용으로 표시
             if has_momentum and momentum_score == 4:
-                signal       = "⚡ 하락장 반등 감지 (고위험)"
+                signal       = "⚡ 하락장 반등 (고위험)"
                 strategy_rec = "모멘텀V6"
             else:
-                return None  # 하락장 + 모멘텀 없으면 제외
-        elif valid_fibs and abs(dist_pct) <= 5 and pct >= 50:
-            signal       = "🟢 피보 매수 근접"
-            strategy_rec = "피보나치V5"
-        elif valid_fibs and dist_pct > -15 and pct >= 40:
-            signal       = "🟡 피보 대기"
-            strategy_rec = "피보나치V5"
-        elif has_momentum and ticker_type == "고변동성":
-            signal       = "🚀 모멘텀 진입"
-            strategy_rec = "모멘텀V6"
-        elif has_momentum:
-            signal       = "📈 모멘텀 감지"
-            strategy_rec = "모멘텀V6"
-        elif valid_fibs:
-            signal       = "⏳ 피보 원거리"
-            strategy_rec = "피보나치V5"
+                return None
+
+        elif regime == "UPtrend":
+            if has_momentum:
+                signal       = "🚀 V6 모멘텀 진입"
+                strategy_rec = "모멘텀V6"
+            elif valid_fibs and abs(dist_pct) <= 5:
+                signal       = "🟢 V6 피보 근접"
+                strategy_rec = "모멘텀V6"
+            elif valid_fibs:
+                signal       = "⏳ V6 대기"
+                strategy_rec = "모멘텀V6"
+            else:
+                return None
+
+        elif regime == "RANGE":
+            if v7_ready and valid_fibs:
+                signal       = "🎯 V7 과매도 진입"
+                strategy_rec = "V7역추세"
+            elif v7_score >= 2 and valid_fibs:
+                signal       = "🟡 V7 조건 근접 (양봉 대기)"
+                strategy_rec = "V7역추세"
+            elif valid_fibs and abs(dist_pct) <= 5 and pct >= 50:
+                signal       = "🟢 V5 피보 매수 근접"
+                strategy_rec = "피보나치V5"
+            elif valid_fibs and dist_pct > -15 and pct >= 40:
+                signal       = "🟡 V5 피보 대기"
+                strategy_rec = "피보나치V5"
+            elif valid_fibs:
+                signal       = "⏳ V5 원거리"
+                strategy_rec = "피보나치V5"
+            else:
+                return None
         else:
-            # 피보나치도 모멘텀도 없어도 — 원거리 표시 후 포함
-            signal       = "⏳ 신호 없음 (대기)"
-            strategy_rec = "관망"
+            return None
 
         # ── 불타기 판단 ──────────────────────────────────
         bull_score = int(row.get("BullAdd_score", 0))
@@ -594,14 +622,18 @@ def scan_single(ticker):
         ret_1w = float((df["Close"].iloc[-1]/df["Close"].iloc[-6]-1)*100)  if len(df)>=6  else 0
         ret_1m = float((df["Close"].iloc[-1]/df["Close"].iloc[-22]-1)*100) if len(df)>=22 else 0
 
-        if strategy_rec.startswith("모멘텀"):
-            # 모멘텀: AI점수 30% + 모멘텀점수 30% + 적합도 30% + 불타기 10%
-            total_rec_score = (pct*0.3 + momentum_score/4*100*0.3
-                               + mom_fit*0.3 + bull_score/3*20*0.1)
+        if strategy_rec == "V7역추세":
+            # V7: 과매도점수 40% + AI점수 30% + 피보근접도 20% + 불타기 10%
+            total_rec_score = (v7_score/4*100*0.4 + pct*0.3
+                               + fib_score*0.2 + bull_score/3*20*0.1)
+        elif strategy_rec.startswith("모멘텀"):
+            # V6 모멘텀: 모멘텀점수 40% + AI점수 30% + 적합도 20% + 불타기 10%
+            total_rec_score = (momentum_score/4*100*0.4 + pct*0.3
+                               + mom_fit*0.2 + bull_score/3*20*0.1)
         else:
-            # 피보나치: AI점수 30% + 피보근접도 25% + 적합도 35% + 불타기 10%
-            total_rec_score = (pct*0.3 + fib_score*0.25
-                               + fib_fit*0.35 + bull_score/3*20*0.1)
+            # V5 피보나치: 피보근접도 35% + AI점수 30% + 적합도 25% + 불타기 10%
+            total_rec_score = (fib_score*0.35 + pct*0.3
+                               + fib_fit*0.25 + bull_score/3*20*0.1)
 
         # ── 종목 적합도 점수 (0~100) ──────────────────────────
         # 피보나치 전략 적합도
@@ -679,9 +711,12 @@ def scan_single(ticker):
             "irs": int(row["IrregularScore"]),
             "stoch": float(row["StochRSI"]),
             "adx":   float(row["ADX"]),
-            "ret_1w": ret_1w,
-            "ret_1m": ret_1m,
+            "ret_1w":       ret_1w,
+            "ret_1m":       ret_1m,
             "total_rec_score": total_rec_score,
+            "v7_score":      v7_score,
+            "v7_ready":      v7_ready,
+            "style_result":  classify_stock_style(df),
         }
     except Exception:
         return None
@@ -813,6 +848,194 @@ STRATEGY_DESC = {
 # ════════════════════════════════════════════════════════════
 # 단계별 백테스트 버전 정의
 # ════════════════════════════════════════════════════════════
+# ════════════════════════════════════════════════════════════
+# Style Detector — 종목 성향 자동 분류 엔진
+# ════════════════════════════════════════════════════════════
+def classify_stock_style(df):
+    """
+    최근 1년 데이터로 종목 성향 자동 분류
+    반환: {style, scores, reason, best_strategy, confidence}
+
+    MOM  (모멘텀형): 추세 강함 → V6
+    FIB  (피보나치형): 박스권 눌림목 → V5/V7
+    STAT (통계형): 저변동 평균회귀 → V7
+    """
+    score_mom  = 0
+    score_fib  = 0
+    score_stat = 0
+    reasons    = {"MOM":[], "FIB":[], "STAT":[]}
+
+    try:
+        df = df.copy()
+        close = df["Close"]
+        n = len(df)
+
+        # ── 모멘텀 점수 ───────────────────────────────────
+        # 1년 고점의 90% 이상 = 신고가 근처 = 강한 모멘텀
+        high252 = close.rolling(min(252,n)).max().iloc[-1]
+        if close.iloc[-1] >= high252 * 0.90:
+            score_mom += 2
+            reasons["MOM"].append("52주 고점 90% 이내")
+
+        # MA20 > MA60 = 단기 상승 추세
+        if "MA20" in df.columns and "MA60" in df.columns:
+            if float(df["MA20"].iloc[-1]) > float(df["MA60"].iloc[-1]):
+                score_mom += 1
+                reasons["MOM"].append("MA20 > MA60 골든크로스")
+
+        # ROC 20일 10% 이상 = 강한 상승
+        roc20 = float((close.iloc[-1] / close.iloc[max(-21,-n)] - 1) * 100)
+        if roc20 > 10:
+            score_mom += 1
+            reasons["MOM"].append(f"20일 수익률 +{roc20:.1f}% 강세")
+
+        # ADX 25 이상 = 추세 강함
+        if "ADX" in df.columns:
+            adx_val = float(df["ADX"].dropna().iloc[-1]) if not df["ADX"].isna().all() else 15
+            if adx_val > 25:
+                score_mom += 1
+                reasons["MOM"].append(f"ADX {adx_val:.0f} 추세 강함")
+
+        # 주별 상승 빈도 60% 이상 = 꾸준한 상승
+        weekly_up = (close.diff(5) > 0).tail(52).mean()
+        if weekly_up >= 0.60:
+            score_mom += 1
+            reasons["MOM"].append(f"주별 상승 빈도 {weekly_up*100:.0f}%")
+
+        # ── 피보나치형 점수 ───────────────────────────────
+        # MA200 아래이고 Z-Score 낮으면 눌림목 반등형
+        if "MA200" in df.columns:
+            ma200 = float(df["MA200"].dropna().iloc[-1])
+            if close.iloc[-1] < ma200 * 1.05:
+                score_fib += 1
+                reasons["FIB"].append("MA200 근처 (눌림목 구간)")
+
+        # Z-Score -1.5 이하 = 통계적 과매도
+        if "ZScore" in df.columns:
+            zs = float(df["ZScore"].dropna().iloc[-1]) if not df["ZScore"].isna().all() else 0
+            if zs < -1.5:
+                score_fib += 1
+                reasons["FIB"].append(f"Z-Score {zs:.2f} 과매도")
+
+        # BB 하단 터치 횟수 5회 이상 = 박스권 반등 패턴
+        if "BB_touch_low" in df.columns:
+            bb_cnt = int(df["BB_touch_low"].tail(252).sum())
+            if bb_cnt >= 5:
+                score_fib += 1
+                reasons["FIB"].append(f"BB 하단 터치 {bb_cnt}회 (반등 패턴)")
+
+        # 52주 낙폭 -10~-35% = 적당한 조정 (피보나치 최적 구간)
+        draw52 = float((close.iloc[-1] / high252 - 1) * 100)
+        if -35 <= draw52 <= -10:
+            score_fib += 2
+            reasons["FIB"].append(f"52주 낙폭 {draw52:.1f}% (피보나치 적정 조정)")
+
+        # ── 통계형 점수 ───────────────────────────────────
+        # 일간 변동성 2% 미만 = 저변동성
+        if "Return" in df.columns:
+            vol_daily = float(df["Return"].tail(252).std())
+            if vol_daily < 0.02:
+                score_stat += 2
+                reasons["STAT"].append(f"일간변동성 {vol_daily*100:.2f}% 낮음")
+
+        # Z-Score 절댓값 평균 1.0 미만 = 평균 회귀 안정적
+        if "ZScore" in df.columns:
+            zabs_mean = float(df["ZScore"].tail(252).abs().mean())
+            if zabs_mean < 1.0:
+                score_stat += 1
+                reasons["STAT"].append(f"Z-Score 평균 {zabs_mean:.2f} 안정")
+
+        # RSI 평균 40~60 = 중립적 모멘텀 (평균 회귀 유리)
+        if "RSI" in df.columns:
+            rsi_mean = float(df["RSI"].tail(252).mean())
+            if 40 <= rsi_mean <= 60:
+                score_stat += 1
+                reasons["STAT"].append(f"RSI 평균 {rsi_mean:.0f} (중립)")
+
+        # ADX 20 미만 = 추세 약함 = 박스권
+        if "ADX" in df.columns:
+            adx_mean = float(df["ADX"].tail(60).mean())
+            if adx_mean < 20:
+                score_stat += 1
+                reasons["STAT"].append(f"ADX 평균 {adx_mean:.0f} (추세 약함)")
+
+        # ── 최종 분류 ─────────────────────────────────────
+        scores = {"MOM": score_mom, "FIB": score_fib, "STAT": score_stat}
+        best   = max(scores, key=scores.get)
+        total  = sum(scores.values())
+        conf   = scores[best] / max(total, 1) * 100
+
+        # 전략 매핑
+        strategy_map = {
+            "MOM":  "V6 — 고변동성 모멘텀",
+            "FIB":  "V5 — 조건 완화 + 현실 익절",
+            "STAT": "V7 — 과매도 역추세 (권장)",
+        }
+        style_name = {
+            "MOM":  "📈 모멘텀형",
+            "FIB":  "📐 피보나치형",
+            "STAT": "📊 통계형",
+        }
+
+        return {
+            "style":    best,
+            "style_name": style_name[best],
+            "scores":   scores,
+            "reasons":  reasons[best],
+            "best_strategy": strategy_map[best],
+            "confidence": round(conf, 1),
+            "draw52":   round(draw52, 1),
+            "roc20":    round(roc20, 1),
+        }
+    except Exception as e:
+        return {
+            "style": "FIB", "style_name": "📐 피보나치형",
+            "scores": {"MOM":0,"FIB":1,"STAT":0},
+            "reasons": ["분류 중 오류"], "best_strategy": "V5 — 조건 완화 + 현실 익절",
+            "confidence": 0, "draw52": 0, "roc20": 0,
+        }
+
+
+# ── 빠른 백테스트 (스캔용 경량 버전) ──────────────────────
+def quick_backtest(df, strategy):
+    """
+    스캔 시 빠른 성과 계산 (3가지 전략)
+    반환: {wr, cagr, mdd, trades, grade}
+    """
+    try:
+        if strategy == "V6 — 고변동성 모멘텀":
+            trades, metrics = run_momentum_backtest(df)
+        elif strategy == "V7 — 과매도 역추세 (권장)":
+            trades, metrics = run_v7_backtest(df)
+        else:
+            trades, metrics = run_backtest(df, score_thr=40, buy_logic="2of3")
+
+        if not metrics:
+            return None
+
+        n = metrics.get("총 완결 거래", 0)
+        wr = float(metrics.get("승률","0%").replace("%",""))
+        cagr_str = metrics.get("CAGR","0%").replace("%","")
+        cagr = float(cagr_str) if cagr_str not in ["-","nan"] else 0
+        mdd  = float(metrics.get("MDD","0%").replace("%",""))
+
+        # 신뢰도 등급 (거래 수 기반)
+        if n < 3:
+            grade = "⚠️ 데이터 부족"
+        elif wr >= 60 and cagr >= 30:
+            grade = "🏆 최적"
+        elif wr >= 50 and cagr >= 15:
+            grade = "✅ 양호"
+        elif cagr > 0:
+            grade = "△ 보통"
+        else:
+            grade = "❌ 부적합"
+
+        return {"wr":wr, "cagr":cagr, "mdd":mdd, "trades":n, "grade":grade}
+    except Exception:
+        return None
+
+
 BT_VERSIONS = {
     "V1 — 기본 피보나치": {
         "desc": "피보나치 BUY1 도달 시 바로 진입. 레짐/점수/StochRSI 필터 없음.",
@@ -1011,15 +1234,20 @@ def run_v7_backtest(df, slippage=0.002, trail_pct=0.15):
                 peak_after_buy = p
 
             # 손절: 평균단가 기준 or Fib 0.886
-            stop_price   = max(avg * (1 - cfg_e["stop"]), fib886)
-            # 트레일링: 최고가 대비 하락
-            trail_price  = peak_after_buy * (1 - trail_pct)
-            # 익절: 수익 구간에서 트레일링 발동
-            exit_trail   = (p <= trail_price) and (p > avg * 1.05)
+            # V7 손절: 넓게 잡기 (역추세는 변동성 큼)
+            stop_price  = avg * (1 - max(cfg_e["stop"], 0.10))
+            # 트레일링: 수익 1% 이상이면 발동 (조건 완화)
+            trail_price = peak_after_buy * (1 - trail_pct)
+            # 고정 익절 +12% or 트레일링 중 더 큰 것
+            fixed_tp    = avg * 1.12
+            exit_trail  = (p <= trail_price) and (p > avg * 1.01)
+            exit_fixed  = p >= fixed_tp
 
             exit_reason = None
             if p < stop_price:
                 exit_reason = "❌ 손절"
+            elif exit_fixed:
+                exit_reason = f"✅ 고정 익절 +12%"
             elif exit_trail:
                 exit_reason = f"✅ 트레일링 익절 (고점${peak_after_buy:.2f} 대비 -{trail_pct*100:.0f}%)"
 
@@ -1775,6 +2003,109 @@ elif menu=="🔍 종목 분석" and analyze_btn:
     st.markdown(f"### 🔍 {ticker_input} 분석 결과")
 
     # ════════════════════════════════════════════════════════
+    # Style Detector + 3전략 백테스트 비교
+    # ════════════════════════════════════════════════════════
+    with st.spinner("🧠 종목 성향 분석 + 전략 백테스트 비교 중..."):
+        style_result = classify_stock_style(res["df"])
+
+        # 3가지 전략 모두 빠른 백테스트
+        bt_v5 = quick_backtest(res["df"], "V5 — 조건 완화 + 현실 익절")
+        bt_v6 = quick_backtest(res["df"], "V6 — 고변동성 모멘텀")
+        bt_v7 = quick_backtest(res["df"], "V7 — 과매도 역추세 (권장)")
+
+    # ── Style Detector 결과 ──
+    style      = style_result["style"]
+    style_name = style_result["style_name"]
+    style_conf = style_result["confidence"]
+    best_strat = style_result["best_strategy"]
+    reasons    = style_result["reasons"]
+    s_scores   = style_result["scores"]
+
+    style_colors = {"MOM":"#00ff9d","FIB":"#ffd700","STAT":"#00d4ff"}
+    sc = style_colors.get(style,"#9ca3af")
+
+    st.markdown(f"""
+    <div style="background:#0f172a;border:2px solid {sc};
+                border-radius:14px;padding:16px;margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <div style="color:{sc};font-weight:700;font-size:1.1rem">
+            {style_name} — {ticker_input}
+          </div>
+          <div style="color:#9ca3af;font-size:.78rem;margin-top:4px">
+            분류 신뢰도: {style_conf:.0f}% &nbsp;|&nbsp;
+            MOM:{s_scores['MOM']}점 / FIB:{s_scores['FIB']}점 / STAT:{s_scores['STAT']}점
+          </div>
+        </div>
+        <div style="text-align:right">
+          <div style="color:#6b7280;font-size:.72rem">최적 전략</div>
+          <div style="color:{sc};font-weight:700;font-size:.85rem">{best_strat[:10]}...</div>
+        </div>
+      </div>
+      <div style="margin-top:10px;border-top:1px solid #1e2d4a;padding-top:8px">
+        <div style="color:#6b7280;font-size:.72rem;margin-bottom:4px">분류 근거:</div>
+        {"".join(f'<span style="background:#111827;border-radius:4px;padding:2px 6px;margin:2px;font-size:.72rem;color:{sc};display:inline-block">{r}</span>' for r in reasons)}
+      </div>
+    </div>""", unsafe_allow_html=True)
+
+    # ── 3전략 백테스트 비교표 ──
+    st.markdown("#### 📊 3전략 백테스트 비교 (자동)")
+    st.caption("동일 종목에 3가지 전략 적용 → 어떤 전략이 최적인지 자동 비교")
+
+    compare_rows = []
+    for strat_name, bt_result, is_best in [
+        ("📐 V5 피보나치", bt_v5, best_strat.startswith("V5")),
+        ("🚀 V6 모멘텀",   bt_v6, best_strat.startswith("V6")),
+        ("🎯 V7 역추세",   bt_v7, best_strat.startswith("V7")),
+    ]:
+        if bt_result:
+            compare_rows.append({
+                "전략":    f"{'⭐ ' if is_best else ''}{strat_name}",
+                "거래수":  bt_result["trades"],
+                "승률":    f"{bt_result['wr']:.1f}%",
+                "CAGR":    f"{bt_result['cagr']:+.1f}%",
+                "MDD":     f"{bt_result['mdd']:.1f}%",
+                "등급":    bt_result["grade"],
+                "추천":    "✅ Style 추천" if is_best else "",
+            })
+        else:
+            compare_rows.append({
+                "전략": strat_name, "거래수": 0,
+                "승률":"-","CAGR":"-","MDD":"-",
+                "등급":"⚠️ 데이터 부족","추천":"",
+            })
+
+    df_compare = pd.DataFrame(compare_rows)
+    st.dataframe(df_compare, use_container_width=True, hide_index=True,
+        column_config={
+            "전략":   st.column_config.TextColumn("전략",  width="medium"),
+            "거래수": st.column_config.NumberColumn("거래수",width="small"),
+            "승률":   st.column_config.TextColumn("승률",  width="small"),
+            "CAGR":   st.column_config.TextColumn("CAGR",  width="small"),
+            "MDD":    st.column_config.TextColumn("MDD",   width="small"),
+            "등급":   st.column_config.TextColumn("등급",  width="small"),
+            "추천":   st.column_config.TextColumn("추천",  width="small"),
+        })
+
+    # 추천 이유 설명
+    best_bt = bt_v5 if best_strat.startswith("V5") else               bt_v6 if best_strat.startswith("V6") else bt_v7
+    if best_bt and best_bt["trades"] >= 3:
+        why_color = "#00ff9d" if best_bt["cagr"] >= 30 else "#ffd700"
+        st.markdown(f"""
+        <div style="background:#0f172a;border-left:4px solid {why_color};
+                    padding:10px 14px;border-radius:0 8px 8px 0;margin-top:6px">
+          <div style="color:{why_color};font-weight:700;font-size:.88rem;margin-bottom:4px">
+            📌 {best_strat[:20]} 추천 이유
+          </div>
+          <div style="color:#9ca3af;font-size:.78rem;line-height:1.8">
+            • 종목 성향: {style_name} ({', '.join(reasons[:2])})<br>
+            • 백테스트: 거래 {best_bt['trades']}건 | 승률 {best_bt['wr']:.0f}% | CAGR {best_bt['cagr']:+.0f}%<br>
+            • 등급: {best_bt['grade']}
+          </div>
+        </div>""", unsafe_allow_html=True)
+    st.markdown("---")
+
+    # ════════════════════════════════════════════════════════
     # 멀티 기간 레짐 분석 (핵심 추가 기능)
     # 단기/중기/장기 레짐을 동시에 보여줌
     # ════════════════════════════════════════════════════════
@@ -1947,7 +2278,212 @@ elif menu=="🔍 종목 분석" and analyze_btn:
     </div>""", unsafe_allow_html=True)
     st.markdown("---")
 
-    # ── 종목 유형 자동 감지 + 권장 전략 배너 ──
+    # ════════════════════════════════════════════════════════
+    # 오늘 종가 기준 매수/매도 신호 + 전략 추천
+    # ════════════════════════════════════════════════════════
+    st.markdown("### 📊 오늘 종가 기준 매매 신호")
+    st.caption(f"기준: {datetime.date.today()} 장 마감 종가 ${res['price']:.2f}")
+
+    row_now = res["row"]
+    price_now = res["price"]
+    regime_now = res["regime"]
+
+    # ── 현재 종가 기준 각 전략 신호 계산 ──
+    # V6 모멘텀 신호
+    ma20_now  = float(row_now.get("MA20", 0))
+    ma60_now  = float(row_now.get("MA60", 1))
+    rsi_now2  = float(row_now.get("RSI", 50))
+    macd_now  = float(row_now.get("MACD_hist", 0)) if not pd.isna(row_now.get("MACD_hist", float("nan"))) else 0
+    vol_now   = float(row_now.get("Volume", 0))
+    volma_now = float(row_now.get("VolMA20", 1))
+
+    v6_c1 = ma20_now > ma60_now
+    v6_c2 = 45 <= rsi_now2 <= 68
+    v6_c3 = macd_now > 0
+    v6_c4 = volma_now > 0 and (vol_now / volma_now) >= 1.3
+    v6_count = int(v6_c1)+int(v6_c2)+int(v6_c3)+int(v6_c4)
+    v6_signal = v6_count >= 3
+
+    # V7 과매도 신호
+    zscore_now2  = float(row_now.get("ZScore", 0)) if not pd.isna(row_now.get("ZScore", float("nan"))) else 0
+    bb_now2      = int(row_now.get("BB_touch_low", 0))
+    rsi_os_now   = rsi_now2 < 30
+    stoch_os_now = float(row_now.get("StochRSI", 50)) < 20
+    bull_c_now   = int(row_now.get("BullCandle", 0))
+    v7_score_now2 = int(zscore_now2 < -2) + int(bb_now2) + int(rsi_os_now) + int(stoch_os_now)
+    v7_signal    = v7_score_now2 >= 2 and bull_c_now == 1
+
+    # 피보나치 BUY 근접 신호
+    fib1 = res["fib_lv"][0]
+    fib_near = fib1 and abs(price_now - fib1) / price_now <= 0.03
+
+    # ── 전략별 신호 판단 ──
+    # 레짐 기반으로 추천 전략 결정
+    if regime_now == "UPtrend":
+        rec_model = "V6"
+        model_signal = v6_signal
+        model_score  = v6_count
+        model_total  = 4
+    elif regime_now == "RANGE":
+        # V7 조건이 더 강하면 V7, 아니면 V5
+        if v7_score_now2 >= 2:
+            rec_model = "V7"
+            model_signal = v7_signal
+            model_score  = v7_score_now2
+            model_total  = 4
+        else:
+            rec_model = "V5"
+            model_signal = bool(fib_near)
+            model_score  = 1 if fib_near else 0
+            model_total  = 1
+    else:
+        rec_model = "없음"
+        model_signal = False
+        model_score  = 0
+        model_total  = 0
+
+    # ── 신호 표시 ──
+    if regime_now == "DOWNtrend":
+        sig_color = "#ff4757"
+        sig_icon  = "🚫"
+        sig_title = "매수 금지 — 하락장"
+        sig_desc  = "현재 레짐이 DOWNtrend입니다. 매수하지 마세요.\n인버스 ETF(SQQQ, SPXS) 또는 현금 보유를 권장합니다."
+        sig_action = "오늘 할 일: 없음 (관망)"
+    elif model_signal:
+        sig_color = "#00ff9d"
+        sig_icon  = "🟢"
+        sig_title = f"매수 신호 — {rec_model} 전략"
+        if rec_model == "V6":
+            sig_desc  = f"모멘텀 조건 {v6_count}/4 충족 — 내일 시가 기준 매수 진입"
+        elif rec_model == "V7":
+            sig_desc  = f"과매도 조건 {v7_score_now2}/4 + 양봉 확인 — 내일 지정가 매수"
+        else:
+            sig_desc  = f"피보나치 BUY1 근접 — 조건 추가 확인 후 진입"
+        sig_action = "오늘 할 일: 내일 지정가 주문 준비 ↓"
+    elif v7_score_now2 >= 2 and not bull_c_now:
+        sig_color = "#ffd700"
+        sig_icon  = "⚡"
+        sig_title = f"V7 과매도 감지 — 양봉 대기"
+        sig_desc  = f"과매도 조건 {v7_score_now2}/4 충족. 오늘 양봉(종가>시가) 미확인.\n내일 시가 확인 후 양봉이면 진입."
+        sig_action = "오늘 할 일: 내일 장 시작 후 양봉 확인 후 매수"
+    elif fib1 and (price_now - fib1)/price_now <= 0.08:
+        sig_color = "#ffd700"
+        sig_icon  = "🟡"
+        sig_title = f"피보나치 BUY1 근접 대기"
+        sig_desc  = f"BUY1 ${fib1:.2f}까지 {(fib1/price_now-1)*100:+.1f}% — 진입 구간 접근 중"
+        sig_action = "오늘 할 일: 지정가 주문 대기"
+    else:
+        sig_color = "#6b7280"
+        sig_icon  = "⏳"
+        sig_title = "신호 없음 — 대기"
+        sig_desc  = "현재 매수/매도 신호 없음. 조건 미충족."
+        sig_action = "오늘 할 일: 없음 (다음 분석 대기)"
+
+    # 신호 메인 배너
+    st.markdown(f"""
+    <div style="background:#0f172a;border:2px solid {sig_color};
+                border-radius:14px;padding:18px;margin-bottom:12px">
+      <div style="font-size:1.6rem;margin-bottom:8px">{sig_icon}</div>
+      <div style="color:{sig_color};font-weight:700;font-size:1.1rem;
+                  margin-bottom:6px">{sig_title}</div>
+      <div style="color:#9ca3af;font-size:.82rem;line-height:1.8;
+                  white-space:pre-line">{sig_desc}</div>
+      <div style="margin-top:12px;padding:8px 12px;background:#111827;
+                  border-radius:8px;color:{sig_color};font-size:.82rem;
+                  font-weight:700">{sig_action}</div>
+    </div>""", unsafe_allow_html=True)
+
+    # ── 전략별 조건 체크리스트 ──
+    if regime_now != "DOWNtrend":
+        check_tabs = st.tabs([f"🚀 V6 모멘텀 ({v6_count}/4)",
+                               f"🎯 V7 역추세 ({v7_score_now2}/4)",
+                               f"📐 V5 피보나치"])
+
+        with check_tabs[0]:  # V6
+            st.caption("UPtrend 레짐에서 사용. 4조건 중 3개 이상이면 내일 매수")
+            checks = [
+                ("MA20 > MA60 (골든크로스)", v6_c1,
+                 f"MA20:{ma20_now:.1f} vs MA60:{ma60_now:.1f}"),
+                ("RSI 45~68 (과열 아님)", v6_c2,
+                 f"현재 RSI: {rsi_now2:.1f}"),
+                ("MACD 히스토그램 양수", v6_c3,
+                 f"현재 MACD Hist: {macd_now:+.4f}"),
+                ("거래량 평균 1.3배 이상", v6_c4,
+                 f"거래량비: {vol_now/volma_now:.2f}배" if volma_now > 0 else "거래량 데이터 없음"),
+            ]
+            for label, ok, detail in checks:
+                color = "#00ff9d" if ok else "#ff4757"
+                icon  = "✅" if ok else "❌"
+                st.markdown(
+                    f"<div style='padding:6px 0;border-bottom:1px solid #1e2d4a'>"
+                    f"<span style='color:{color}'>{icon}</span> "
+                    f"<span style='color:#e8eaf6;font-size:.85rem'>{label}</span>"
+                    f"<span style='color:#6b7280;font-size:.75rem;float:right'>{detail}</span>"
+                    f"</div>", unsafe_allow_html=True
+                )
+            if v6_count >= 3:
+                st.success(f"✅ V6 진입 조건 충족 ({v6_count}/4) — 내일 시가에 매수")
+            else:
+                st.info(f"⏳ V6 조건 미충족 ({v6_count}/4) — {4-v6_count}개 더 필요")
+
+        with check_tabs[1]:  # V7
+            st.caption("RANGE 레짐에서 사용. 과매도 2개 이상 + 양봉이면 내일 매수")
+            checks7 = [
+                ("Z-Score < -2 (통계적 극단 과매도)", zscore_now2 < -2,
+                 f"현재 Z-Score: {zscore_now2:.2f}"),
+                ("볼린저밴드 하단 터치", bool(bb_now2),
+                 "하단 터치 중" if bb_now2 else "하단 위에 있음"),
+                ("RSI < 30 (과매도)", rsi_os_now,
+                 f"현재 RSI: {rsi_now2:.1f}"),
+                ("StochRSI < 20 (과매도)", stoch_os_now,
+                 f"현재 StochRSI: {float(row_now.get('StochRSI',50)):.1f}"),
+            ]
+            for label, ok, detail in checks7:
+                color = "#00ff9d" if ok else "#ff4757"
+                icon  = "✅" if ok else "❌"
+                st.markdown(
+                    f"<div style='padding:6px 0;border-bottom:1px solid #1e2d4a'>"
+                    f"<span style='color:{color}'>{icon}</span> "
+                    f"<span style='color:#e8eaf6;font-size:.85rem'>{label}</span>"
+                    f"<span style='color:#6b7280;font-size:.75rem;float:right'>{detail}</span>"
+                    f"</div>", unsafe_allow_html=True
+                )
+            bull_color = "#00ff9d" if bull_c_now else "#ffd700"
+            st.markdown(
+                f"<div style='padding:6px 0;margin-top:4px'>"
+                f"<span style='color:{bull_color}'>{'✅' if bull_c_now else '⚡'}</span> "
+                f"<span style='color:#e8eaf6;font-size:.85rem'>오늘 양봉 확인 (종가>시가)</span>"
+                f"<span style='color:#6b7280;font-size:.75rem;float:right'>"
+                f"{'양봉 확인됨' if bull_c_now else '음봉 — 내일 재확인'}</span>"
+                f"</div>", unsafe_allow_html=True
+            )
+            if v7_signal:
+                st.success(f"✅ V7 진입 조건 충족 ({v7_score_now2}/4 + 양봉) — 내일 지정가 매수")
+            elif v7_score_now2 >= 2:
+                st.warning(f"⚡ 과매도 감지 ({v7_score_now2}/4) — 양봉 미확인, 내일 재확인")
+            else:
+                st.info(f"⏳ V7 조건 미충족 ({v7_score_now2}/4)")
+
+        with check_tabs[2]:  # V5
+            st.caption("RANGE 레짐에서 사용. 피보나치 BUY 구간 도달 시 분할매수")
+            if res["fib_lv"][0]:
+                for i, (lv, price_lv) in enumerate(zip(
+                    ["BUY1","BUY2","BUY3"], res["fib_lv"]
+                )):
+                    if price_lv:
+                        dist = (price_lv/price_now-1)*100
+                        color = "#00ff9d" if abs(dist) <= 3 else "#ffd700" if abs(dist) <= 8 else "#6b7280"
+                        near  = "🟢 진입 구간!" if abs(dist) <= 3 else "🟡 근접" if abs(dist) <= 8 else "⏳ 대기"
+                        st.markdown(
+                            f"<div style='padding:8px 0;border-bottom:1px solid #1e2d4a'>"
+                            f"<span style='color:{color};font-weight:700'>{lv}: ${price_lv:.2f}</span>"
+                            f"<span style='color:{color};font-size:.8rem;margin-left:8px'>{dist:+.1f}%</span>"
+                            f"<span style='color:{color};float:right;font-size:.8rem'>{near}</span>"
+                            f"</div>", unsafe_allow_html=True
+                        )
+            else:
+                st.info("피보나치 BUY 구간 미형성 — 조정 후 재분석")
+    st.markdown("---")
     ticker_type_a = classify_ticker_type(ticker_input, res["df"])
     # ── 종목 적합도 분석 ─────────────────────────────────────
     df_a = res["df"]
@@ -3292,19 +3828,20 @@ elif menu=="🤖 AI 종목 추천" and scan_btn:
                         st.error(f"진단 오류: {e}")
         st.stop()
 
-    # ── 요약 카드 ──
-    near_list  = [r for r in scan_results if "매수 근접" in r["signal"]]
-    wait_list  = [r for r in scan_results if "대기" in r["signal"]]
-    bull_list  = [r for r in scan_results if r["is_bull"]]
+    # ── 전략별 분류 ──
+    v7_list  = [r for r in scan_results if r.get("strategy_rec")=="V7역추세"]
+    v6_list  = [r for r in scan_results if r.get("strategy_rec")=="모멘텀V6"]
+    v5_list  = [r for r in scan_results if r.get("strategy_rec")=="피보나치V5"]
+    ready_list = [r for r in scan_results if "진입" in r.get("signal","")]
 
     s1,s2,s3,s4 = st.columns(4)
-    mcard(s1,"📡 스캔 완료",    f"{len(tickers)}개",   "#6b7280")
-    mcard(s2,"🟢 매수 근접",    f"{len(near_list)}개",  "#00ff9d",
-          "피보나치 ±5% 이내")
-    mcard(s3,"🟡 대기 중",      f"{len(wait_list)}개",  "#ffd700",
-          "조정 진행 중")
-    mcard(s4,"📈 불타기 신호",  f"{len(bull_list)}개",  "#00d4ff",
-          "상승 전환 감지")
+    mcard(s1,"📡 스캔 완료",   f"{len(tickers)}개",    "#6b7280")
+    mcard(s2,"🎯 V7 역추세",   f"{len(v7_list)}개",    "#00d4ff",
+          "RANGE+과매도")
+    mcard(s3,"🚀 V6 모멘텀",   f"{len(v6_list)}개",    "#00ff9d",
+          "UPtrend+모멘텀")
+    mcard(s4,"✅ 즉시 진입",   f"{len(ready_list)}개", "#ffd700",
+          "조건 충족")
     st.markdown("---")
 
     # ── TOP N 순위 표 ──
@@ -3319,15 +3856,26 @@ elif menu=="🤖 AI 종목 추천" and scan_btn:
         dist_str= f"{r['dist_pct']:+.1f}%" if r["dist_pct"] else "-"
         # 불타기 표시
         bull_str = f"📈 {r['bull_score']}/3" if r["is_bull"] else f"📉 {r['bull_score']}/3"
+        # 전략별 아이콘 + 성향
+        strat = r.get("strategy_rec","피보나치V5")
+        strat_icon = {"V7역추세":"🎯","모멘텀V6":"🚀","피보나치V5":"📐"}.get(strat,"📐")
+        v7_s = r.get("v7_score",0)
+        sr   = r.get("style_result", {})
+        style_nm = sr.get("style_name","") if sr else ""
         rank_rows.append({
             "순위":      i+1,
             "종목":      r["ticker"],
-            "유형":      "🔥 고변동" if r.get("ticker_type")=="고변동성" else "🧊 저변동",
-            "적합도":    r.get("fit_grade","—"),
-            "권장전략":  r.get("best_strategy", r.get("strategy_rec","피보V5")),
-            "피보적합":  f"{r.get('fib_fit',0):.0f}점",
-            "모멘적합":  f"{r.get('mom_fit',0):.0f}점",
-            "52주낙폭":  f"{r.get('draw52',0):.1f}%",
+            "성향":      style_nm,
+            "권장전략":  f"{strat_icon} {strat}",
+            "레짐":      r.get("regime",""),
+            "신호":      r.get("signal",""),
+            "V7점수":    f"{v7_s}/4" if strat=="V7역추세" else "-",
+            "모멘점수":  f"{r.get('momentum_score',0)}/4" if strat=="모멘텀V6" else "-",
+            "BUY1까지":  f"{r.get('dist_pct',0):+.1f}%" if r.get("nearest_fib") else "-",
+            "AI 점수":   f"{r.get('pct',0):.0f}%",
+            "추천 점수": f"{r.get('total_rec_score',0):.0f}점",
+            "1주":       f"{r.get('ret_1w',0):+.1f}%",
+            "1개월":     f"{r.get('ret_1m',0):+.1f}%",
             "현재가":    f"${r['price']:.2f}",
             "장세":      r["regime_desc"],
             "신호":      r["signal"],
@@ -3345,20 +3893,18 @@ elif menu=="🤖 AI 종목 추천" and scan_btn:
         column_config={
             "순위":      st.column_config.NumberColumn(width="small"),
             "종목":      st.column_config.TextColumn(width="small"),
-            "유형":      st.column_config.TextColumn("유형",     width="small"),
-            "권장전략":  st.column_config.TextColumn("권장전략",  width="small"),
-            "적합도":    st.column_config.TextColumn("적합도",    width="small"),
-            "피보적합":  st.column_config.TextColumn("피보적합",  width="small"),
-            "모멘적합":  st.column_config.TextColumn("모멘적합",  width="small"),
-            "52주낙폭":  st.column_config.TextColumn("52주낙폭",  width="small"),
+            "성향":      st.column_config.TextColumn("성향",      width="small"),
+            "권장전략":  st.column_config.TextColumn("권장전략",  width="medium"),
+            "레짐":      st.column_config.TextColumn("레짐",      width="small"),
+            "신호":      st.column_config.TextColumn("신호",      width="medium"),
+            "V7점수":    st.column_config.TextColumn("V7점수",    width="small"),
+            "모멘점수":  st.column_config.TextColumn("모멘점수",  width="small"),
+            "BUY1까지":  st.column_config.TextColumn("BUY1까지",  width="small"),
+            "AI 점수":   st.column_config.TextColumn("AI 점수",   width="small"),
+            "추천 점수": st.column_config.TextColumn("추천 점수", width="small"),
             "현재가":    st.column_config.TextColumn(width="small"),
-            "장세":      st.column_config.TextColumn(width="small"),
-            "신호":      st.column_config.TextColumn(width="medium"),
-            "BUY1 가격": st.column_config.TextColumn(width="small"),
-            "BUY1까지":  st.column_config.TextColumn(width="small"),
-            "추가매수":  st.column_config.TextColumn(width="small"),
-            "AI 점수":   st.column_config.TextColumn(width="small"),
-            "추천 점수": st.column_config.TextColumn(width="small"),
+            "1주":       st.column_config.TextColumn(width="small"),
+            "1개월":     st.column_config.TextColumn(width="small"),
         })
     st.markdown("---")
 
