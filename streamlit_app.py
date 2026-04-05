@@ -132,9 +132,35 @@ SECTOR_MAP = {
     # 귀금속/안전자산
     "GLD":"GLD","IAU":"GLD","SLV":"SLV","GDX":"GDX",
     "TLT":"TLT","IEF":"IEF","BIL":"BIL",
+    # 산업재/전력/AI인프라
+    "GEV":"XLI","VRT":"XLI","ETN":"XLI","EMR":"XLI",
+    "NEE":"XLU","DUK":"XLU","SO":"XLU",
+    # 기타 성장주
+    "UBER":"XLY","ABNB":"XLY","SHOP":"XLY",
+    "COIN":"XLK","MARA":"XLK","HOOD":"XLK",
+    "SOFI":"XLF","AFRM":"XLF","SQ":"XLK","PYPL":"XLK",
     # 인버스 ETF → 섹터 필터 제외 (항상 허용)
     "SQQQ":None,"SPXS":None,"SOXS":None,"SDOW":None,
-    "SH":None,"PSQ":None,"VIXY":None,
+    "SH":None,"PSQ":None,"VIXY":None,"SRTY":None,
+}
+
+# 섹터 ETF 설명
+SECTOR_DESC = {
+    "XLK":  "테크 ETF (Technology Select Sector)",
+    "SOXX": "반도체 ETF (iShares Semiconductor)",
+    "XLY":  "임의소비재 ETF (Consumer Discretionary)",
+    "XLP":  "필수소비재 ETF (Consumer Staples)",
+    "XLF":  "금융 ETF (Financial Select Sector)",
+    "XLV":  "헬스케어 ETF (Health Care Select Sector)",
+    "XLE":  "에너지 ETF (Energy Select Sector)",
+    "XLI":  "산업재 ETF (Industrial Select Sector)",
+    "XLU":  "유틸리티 ETF (Utilities Select Sector)",
+    "GLD":  "금 ETF (SPDR Gold Shares)",
+    "SLV":  "은 ETF (iShares Silver Trust)",
+    "GDX":  "금광업 ETF (VanEck Gold Miners)",
+    "TLT":  "장기채 ETF (20+ Year Treasury Bond)",
+    "IEF":  "중기채 ETF (7-10 Year Treasury Bond)",
+    "BIL":  "단기채 ETF (1-3 Month Treasury Bill)",
 }
 
 @st.cache_data(ttl=1800)
@@ -2255,15 +2281,19 @@ elif menu=="🔍 종목 분석" and analyze_btn:
       </div>
       <div style="color:{vix_color};font-size:.72rem">{filters["vix_label"]}</div>
     </div>""", unsafe_allow_html=True)
+    sec_etf_name = filters["sector_etf"]
+    sec_etf_desc = SECTOR_DESC.get(sec_etf_name, sec_etf_name) if sec_etf_name != "해당없음" else "섹터 미분류"
     fc2.markdown(f"""
     <div style="background:#111827;border-radius:8px;padding:10px;text-align:center;
                 border:1px solid {sec_color}44">
-      <div style="color:#6b7280;font-size:.7rem">섹터 ({filters["sector_etf"]})</div>
-      <div style="color:{sec_color};font-weight:700;font-size:1.1rem">
-        {"❌ 하락" if filters["sector_status"]=="WEAK" else
-         "⚠️ 주의" if filters["sector_status"]=="CAUTION" else "✅ 정상"}
+      <div style="color:#6b7280;font-size:.7rem">섹터 대표 ETF</div>
+      <div style="color:{sec_color};font-weight:700;font-size:1rem">{sec_etf_name}</div>
+      <div style="color:{sec_color};font-size:.68rem">
+        {"❌ 하락 중" if filters["sector_status"]=="WEAK" else
+         "⚠️ 주의" if filters["sector_status"]=="CAUTION" else
+         "✅ 정상" if filters["sector_status"]=="OK" else "—"}
       </div>
-      <div style="color:{sec_color};font-size:.72rem">{filters["sector_status"]}</div>
+      <div style="color:#6b7280;font-size:.63rem;margin-top:2px">{sec_etf_desc[:25]}</div>
     </div>""", unsafe_allow_html=True)
     fc3.markdown(f"""
     <div style="background:#111827;border-radius:8px;padding:10px;text-align:center;
@@ -2745,9 +2775,20 @@ elif menu=="🔍 종목 분석" and analyze_btn:
 
     # ── 전략별 조건 체크리스트 ──
     if regime_now != "DOWNtrend":
-        check_tabs = st.tabs([f"🚀 V6 모멘텀 ({v6_count}/4)",
-                               f"🎯 V7 역추세 ({v7_score_now2}/4)",
-                               f"📐 V5 피보나치"])
+        # 최종 추천 전략 탭을 첫 번째로
+        if "V7" in final_strat_name:
+            tab_order = [f"🎯 V7 역추세 ({v7_score_now2}/4)",
+                         f"🚀 V6 모멘텀 ({v6_count}/4)",
+                         f"📐 V5 피보나치"]
+        elif "V6" in final_strat_name:
+            tab_order = [f"🚀 V6 모멘텀 ({v6_count}/4)",
+                         f"🎯 V7 역추세 ({v7_score_now2}/4)",
+                         f"📐 V5 피보나치"]
+        else:
+            tab_order = [f"📐 V5 피보나치",
+                         f"🎯 V7 역추세 ({v7_score_now2}/4)",
+                         f"🚀 V6 모멘텀 ({v6_count}/4)"]
+        check_tabs = st.tabs(tab_order)
 
         with check_tabs[0]:  # V6
             st.caption("UPtrend 레짐에서 사용. 4조건 중 3개 이상이면 내일 매수")
@@ -2877,7 +2918,7 @@ elif menu=="🔍 종목 분석" and analyze_btn:
               {ticker_input} — {ticker_type_a}
             </div>
             <div style="color:#e8eaf6;font-size:.82rem;margin-top:2px">
-              권장 전략: <b>{best_strat_a}</b> &nbsp; {fit_grade_a}
+              종목 성향: <b>{style_name}</b> &nbsp; 신뢰도 {style_conf:.0f}%
             </div>
           </div>
         </div>
@@ -3034,72 +3075,110 @@ elif menu=="🔍 종목 분석" and analyze_btn:
             "설명":        st.column_config.TextColumn("설명",       width="large"),
         })
 
-    # ── 내일 지정가 주문 가격표 ─────────────────────────────
+    # ── 내일 지정가 주문 가격표 (최종 전략 기반) ────────────
     st.markdown("#### 📋 내일 지정가 주문 가격표")
-    st.caption("오늘 저녁 분석 → 내일 장 전에 아래 가격으로 지정가 주문")
 
-    # V7 과매도 점수 확인
-    v7_score_now = int(res["row"].get("V7_oversold_score", 0)) if "V7_oversold_score" in res["row"] else 0
-    bull_now     = int(res["row"].get("BullCandle", 0)) if "BullCandle" in res["row"] else 0
-    zscore_now   = float(res["row"].get("ZScore", 0)) if "ZScore" in res["row"] else 0
-    rsi_now      = float(res["row"].get("RSI", 50)) if "RSI" in res["row"] else 50
-    bb_now       = int(res["row"].get("BB_touch_low", 0)) if "BB_touch_low" in res["row"] else 0
+    slip       = 0.002
+    price_now2 = res["price"]
+    row_now2   = res["row"]
+    cfg_now    = res["cfg"]
 
-    # 슬리피지 반영 진입가 (현재가 기준 예시)
-    slip = 0.002
-    b1_order = res["fib_lv"][0]
-    b2_order = res["fib_lv"][1]
-    b3_order = res["fib_lv"][2]
+    # 지표값
+    v7_score_now = int(row_now2.get("V7_oversold_score", 0))
+    bull_now2    = int(row_now2.get("BullCandle", 0))
+    zscore_now2  = float(row_now2.get("ZScore", 0)) if not pd.isna(row_now2.get("ZScore", float("nan"))) else 0
+    rsi_now2b    = float(row_now2.get("RSI", 50))
+    bb_now2      = int(row_now2.get("BB_touch_low", 0))
+    ma20_now2    = float(row_now2.get("MA20", 0))
+    ma60_now2    = float(row_now2.get("MA60", 1))
+    macd_now2    = float(row_now2.get("MACD_hist", 0)) if not pd.isna(row_now2.get("MACD_hist", float("nan"))) else 0
+    vol_now2     = float(row_now2.get("Volume", 0))
+    volma_now2   = float(row_now2.get("VolMA20", 1))
 
-    if b1_order:
-        b1_slip = b1_order * (1 + slip)
-        stop_order = res["stop_s"] if res["stop_s"] else b1_order * (1 - res["cfg"]["stop"])
-        tp_order   = b1_order * (1 + res["cfg"]["tp"])
+    # 전략에 따라 진입가/손절/익절 계산
+    if "V6" in final_strat_name:
+        # V6 모멘텀: 현재가 기준 진입 (시가 + 슬리피지)
+        entry_price = price_now2 * (1 + slip)
+        stop_price2 = entry_price * (1 - 0.05)   # 손절 -5%
+        tp_price2   = entry_price * (1 + 0.10)   # 익절 +10% (트레일링 -20%)
+        entry_label = f"현재가 기준 (${entry_price:.2f})"
+        stop_label  = f"-5% (${stop_price2:.2f})"
+        tp_label    = f"+10% 고정 or 트레일링 -20%"
+        plan_note   = "V6 모멘텀: 조건 충족 시 내일 시가에 매수 → 손절 -5% / 트레일링 -20%"
+        v6_cnt2 = int(ma20_now2>ma60_now2)+int(45<=rsi_now2b<=68)+int(macd_now2>0)+int(volma_now2>0 and vol_now2/volma_now2>=1.3)
+        cond_txt = f"모멘텀 조건 {v6_cnt2}/4 {'✅ 충족' if v6_cnt2>=3 else '❌ 미충족'}"
+        order_ok = v6_cnt2 >= 3
+    elif "V7" in final_strat_name:
+        # V7 역추세: 피보나치 BUY1 지정가
+        b1 = res["fib_lv"][0]
+        if b1:
+            entry_price = b1 * (1 + slip)
+            stop_price2 = entry_price * (1 - max(cfg_now["stop"], 0.10))
+            tp_price2   = entry_price * 1.12
+            entry_label = f"피보BUY1 지정가 (${entry_price:.2f})"
+            stop_label  = f"-10% (${stop_price2:.2f})"
+            tp_label    = f"+12% 고정 or 트레일링 -15%"
+            plan_note   = "V7 역추세: 피보BUY1 + 과매도 2개 이상 + 양봉 확인 시 진입"
+            rr2 = (tp_price2-entry_price)/(entry_price-stop_price2) if entry_price>stop_price2 else 0
+            cond_txt = f"V7 과매도 {v7_score_now}/4 | 양봉 {'✅' if bull_now2 else '❌'} | 손익비 {rr2:.1f}배"
+            order_ok = v7_score_now >= 2 and bull_now2 == 1
+        else:
+            st.info("⏳ V7: 피보나치 BUY 구간 미형성 — 조정 후 재분석")
+            entry_price = stop_price2 = tp_price2 = 0
+            entry_label = stop_label = tp_label = plan_note = cond_txt = ""
+            order_ok = False
+    else:
+        # V5 피보나치
+        b1 = res["fib_lv"][0]
+        if b1:
+            entry_price = b1 * (1 + slip)
+            stop_price2 = res["stop_s"] if res["stop_s"] else b1*(1-cfg_now["stop"])
+            tp_price2   = res["tp_s"]   if res["tp_s"]   else b1*(1+cfg_now["tp"])
+            entry_label = f"피보BUY1 지정가 (${entry_price:.2f})"
+            stop_label  = f"-{cfg_now['stop']*100:.0f}% (${stop_price2:.2f})"
+            tp_label    = f"+{cfg_now['tp']*100:.0f}% (${tp_price2:.2f})"
+            plan_note   = f"V5 피보나치: BUY1 도달 시 분할매수 시작"
+            dist2 = (b1/price_now2-1)*100
+            cond_txt = f"BUY1까지 {dist2:+.1f}% {'✅ 근접' if abs(dist2)<=3 else '⏳ 대기'}"
+            order_ok = abs(dist2) <= 3
+        else:
+            st.info("⏳ V5: 피보나치 BUY 구간 미형성 — 조정 후 재분석")
+            entry_price = stop_price2 = tp_price2 = 0
+            entry_label = stop_label = tp_label = plan_note = cond_txt = ""
+            order_ok = False
 
-        # V7 조건 충족 여부
-        v7_ready = v7_score_now >= 2 and bull_now == 1
-        rr = (tp_order - b1_slip) / (b1_slip - stop_order) if (b1_slip - stop_order) > 0 else 0
-
-        order_color = "#00ff9d" if v7_ready and rr >= 2.5 else "#ffd700" if v7_ready else "#6b7280"
-        order_status = "✅ 조건 충족 — 주문 가능" if (v7_ready and rr >= 2.5) else                        "⚠️ 과매도 조건 미충족 — 대기" if not v7_ready else                        f"⚠️ 손익비 {rr:.1f} — 2.5 미만, 진입 비권장"
-
+    if entry_price > 0:
+        order_color2 = "#00ff9d" if order_ok else "#ffd700"
+        order_status2 = "✅ 조건 충족 — 내일 주문 준비" if order_ok else "⏳ 조건 미충족 — 대기"
+        final_lbl_now = icon_map.get(final_strat_name, final_strat_name)
+        st.caption(f"적용 전략: {final_lbl_now} | {cond_txt}")
         st.markdown(f"""
-        <div style="background:#0f172a;border:2px solid {order_color};
-                    border-radius:12px;padding:16px;margin-bottom:12px">
-          <div style="color:{order_color};font-weight:700;margin-bottom:12px">
-            {order_status}
-          </div>
-          <div style="color:#6b7280;font-size:.74rem;margin-bottom:8px">
-            V7 과매도 점수: {v7_score_now}/4 &nbsp;|&nbsp;
-            Z-Score: {zscore_now:.2f} &nbsp;|&nbsp;
-            RSI: {rsi_now:.0f} &nbsp;|&nbsp;
-            BB하단: {"✅" if bb_now else "❌"} &nbsp;|&nbsp;
-            양봉: {"✅" if bull_now else "❌"} &nbsp;|&nbsp;
-            손익비: {rr:.1f}배
+        <div style="background:#0f172a;border:2px solid {order_color2};
+                    border-radius:12px;padding:16px;margin-bottom:8px">
+          <div style="color:{order_color2};font-weight:700;margin-bottom:10px">
+            {order_status2}
           </div>
           <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
             <div style="background:#111827;border-radius:8px;padding:10px;text-align:center">
-              <div style="color:#6b7280;font-size:.7rem">🟢 BUY1 지정가</div>
-              <div style="color:#00ff9d;font-weight:700;font-size:1rem">${b1_slip:.2f}</div>
-              <div style="color:#6b7280;font-size:.68rem">슬리피지 0.2% 포함</div>
+              <div style="color:#6b7280;font-size:.7rem">🟢 진입 지정가</div>
+              <div style="color:#00ff9d;font-weight:700;font-size:.95rem">${entry_price:.2f}</div>
+              <div style="color:#6b7280;font-size:.65rem">{entry_label}</div>
             </div>
             <div style="background:#111827;border-radius:8px;padding:10px;text-align:center">
-              <div style="color:#6b7280;font-size:.7rem">🔴 손절 스탑로스</div>
-              <div style="color:#ff4757;font-weight:700;font-size:1rem">${stop_order:.2f}</div>
-              <div style="color:#6b7280;font-size:.68rem">체결 즉시 걸기</div>
+              <div style="color:#6b7280;font-size:.7rem">🔴 손절 스탑</div>
+              <div style="color:#ff4757;font-weight:700;font-size:.95rem">${stop_price2:.2f}</div>
+              <div style="color:#6b7280;font-size:.65rem">{stop_label}</div>
             </div>
             <div style="background:#111827;border-radius:8px;padding:10px;text-align:center">
-              <div style="color:#6b7280;font-size:.7rem">🎯 익절 지정가</div>
-              <div style="color:#ffd700;font-weight:700;font-size:1rem">${tp_order:.2f}</div>
-              <div style="color:#6b7280;font-size:.68rem">트레일링 또는 고정</div>
+              <div style="color:#6b7280;font-size:.7rem">🎯 익절 목표</div>
+              <div style="color:#ffd700;font-weight:700;font-size:.95rem">${tp_price2:.2f}</div>
+              <div style="color:#6b7280;font-size:.65rem">{tp_label}</div>
             </div>
           </div>
-          <div style="margin-top:10px;color:#6b7280;font-size:.72rem;line-height:1.8">
-            📌 BUY2/3는 반등 확인 후 불타기 — 모멘텀 회복 신호 2개 이상 시 추가 매수
+          <div style="margin-top:8px;color:#6b7280;font-size:.72rem">
+            📌 {plan_note}
           </div>
         </div>""", unsafe_allow_html=True)
-    else:
-        st.info("⏳ 현재 피보나치 BUY 구간 미형성 — 조정 후 재분석")
     st.markdown("---")
 
     # ════════════════════════════════════════════════════════════
@@ -3517,11 +3596,12 @@ elif menu=="🔍 종목 분석" and analyze_btn:
             "날짜":        str(row["Date"])[:10],
             "종가":        f"${c:.2f}",
             "등락":        chg_str,
-            "캔들":        "🟢" if c >= o else "🔴",
+            "캔들":        "🟢" if c >= o else "🔴",  # 미국식: 상승=초록, 하락=빨강
             "고가":        f"${h:.2f}",
             "저가":        f"${l:.2f}",
             "매매플랜 위치": plan_status(c),
-            "BUY1까지":    dist_to_buy1(c),
+            "BUY1까지":    dist_to_buy1(c) if "V5" in final_strat_name or "V7" in final_strat_name
+                           else f"진입가까지 {(entry_price/c-1)*100:+.1f}%" if entry_price > 0 else "-",
         })
 
     df_p = pd.DataFrame(price_rows).iloc[::-1].reset_index(drop=True)
