@@ -412,6 +412,54 @@ def build_features(df):
     )
     df["BullAdd_signal"] = (df["BullAdd_score"] >= 2).astype(int)
 
+    # ════════════════════════════════════════════════════
+    # V7 과매도 역추세 + 모멘텀 확인 지표
+    # ════════════════════════════════════════════════════
+
+    # ① Z-Score (20일 이동평균 기준 통계적 과매도)
+    roll_mean = df["Close"].rolling(20).mean()
+    roll_std  = df["Close"].rolling(20).std().replace(0, np.nan)
+    df["ZScore"] = (df["Close"] - roll_mean) / roll_std
+
+    # ② 볼린저밴드 하단 터치
+    df["BB_upper"] = roll_mean + 2 * roll_std
+    df["BB_lower"] = roll_mean - 2 * roll_std
+    df["BB_touch_low"] = (df["Close"] <= df["BB_lower"]).astype(int)
+
+    # ③ RSI < 30 (이미 RSI 있음)
+    df["RSI_oversold"] = (df["RSI"] < 30).astype(int)
+
+    # ④ StochRSI < 20 (이미 StochRSI 있음)
+    df["Stoch_oversold"] = (df["StochRSI"] < 20).astype(int)
+
+    # ⑤ V7 과매도 종합 점수 (A+B+C+D)
+    df["V7_oversold_score"] = (
+        (df["ZScore"] < -2).astype(int) +   # A: Z-Score
+        df["BB_touch_low"] +                  # B: BB 하단
+        df["RSI_oversold"] +                  # C: RSI < 30
+        df["Stoch_oversold"]                  # D: StochRSI < 20
+    )
+
+    # ⑥ 양봉 확인 (당일 종가 > 시가 = 매수세)
+    df["BullCandle"] = (df["Close"] > df["Open"]).astype(int)
+
+    # ⑦ 5일 MA 돌파 (반등 확인)
+    df["MA5"] = df["Close"].rolling(5).mean()
+    df["Above_MA5"] = (df["Close"] > df["MA5"]).astype(int)
+
+    # ⑧ 12개월 모멘텀 (강한 종목 필터)
+    df["Mom12"] = df["Close"].pct_change(252)
+    df["Mom1"]  = df["Close"].pct_change(20)
+    df["MomScore"] = df["Mom12"] - df["Mom1"]  # 장기-단기 = 조정 중 강한 종목
+
+    # ⑨ V7 모멘텀 회복 점수 (BUY2/3 불타기 조건)
+    df["V7_recovery_score"] = (
+        df["Above_MA5"] +          # 5일 MA 돌파
+        df["MACD_rising"] +        # MACD 히스토그램 상승
+        df["HigherLow"] +          # Higher Low
+        df["StochRSI_escape"]      # StochRSI 탈출
+    )
+
     return df
 
 # ════════════════════════════════════════════════════════════
@@ -817,7 +865,230 @@ BT_VERSIONS = {
         "buy_logic": "momentum",
         "strategy_type": "momentum",
     },
+    "V7 — 과매도 역추세 (권장)": {
+        "desc": (
+            "Z-Score+BB+RSI+Stoch 과매도 2개이상 + 양봉 확인 후 진입. "
+            "물타기 금지, 불타기만. 슬리피지 반영. 손익비 2.5 이상만 진입. "
+            "승률 60~70% 목표."
+        ),
+        "score_thr": 40,
+        "use_stoch": True,
+        "use_regime": True,
+        "use_bull_bear": False,
+        "buy_logic": "v7",
+        "strategy_type": "v7",
+    },
 }
+
+def run_v7_backtest(df, slippage=0.002, trail_pct=0.15):
+    """
+    V7 — 과매도 역추세 + 모멘텀 확인 전략
+
+    핵심 원칙:
+    1. 피보나치 = 진입 구간 힌트 (신호 아님)
+    2. BUY1: 피보 도달 + 과매도 4조건 중 2개 + 양봉 확인
+    3. BUY2/3: 물타기 금지 → 모멘텀 회복 확인 후 불타기만
+    4. 진입가: 다음봉 시가 + 슬리피지 (현실 반영)
+    5. 청산: 트레일링 스탑
+    6. 손익비: 2.5 미만이면 진입 안 함
+    """
+    trades=[]; capital=1.0
+    stage=0; ep=[]; ew=[]
+    regime_entry="UNKNOWN"
+    cooldown=0; loss_streak=0
+    peak_after_buy=0
+    START = max(252, 60)  # 12개월 모멘텀 계산 후 시작
+
+    for i in range(START, len(df)-1):  # -1: 다음봉 진입
+        row   = df.iloc[i]
+        row_next = df.iloc[i+1]  # 실제 진입봉 (다음날)
+        p     = float(row["Close"])       # 신호 감지: 당일 종가
+        p_entry = float(row_next["Open"]) * (1 + slippage)  # 실제 진입: 다음날 시가+슬리피지
+
+        regime = row["Regime"]
+        if regime in ["UNKNOWN","DOWNtrend"]: continue
+        if cooldown > 0: cooldown -= 1; continue
+
+        cfg = REGIME_PARAMS[regime]
+
+        # 피보나치 계산
+        sh   = row.get("sw_high", float("nan"))
+        rng  = row.get("rng", 0)
+        fib_ok = bool(row.get("fib_valid", False))
+        if pd.isna(sh) or rng <= 0 or not fib_ok: continue
+
+        fib_prices = [float(sh) - float(rng)*f for f in cfg["fib"]]
+        fib886     = float(sh) - float(rng)*0.886
+
+        # V7 과매도 점수
+        v7_score = int(row.get("V7_oversold_score", 0))
+        bull_candle = int(row.get("BullCandle", 0))
+
+        # 손익비 계산
+        potential_loss = (p - fib886) / p if p > fib886 else 0.05
+        potential_gain = cfg["tp"]
+        risk_reward = potential_gain / potential_loss if potential_loss > 0 else 0
+
+        # ── BUY1 진입 ────────────────────────────────────
+        # 피보 BUY1 도달 + 과매도 2개 이상 + 양봉 + 손익비 2.5이상
+        if stage == 0:
+            if (p <= fib_prices[0] and
+                v7_score >= 2 and
+                bull_candle == 1 and
+                risk_reward >= 2.5 and
+                regime != "DOWNtrend"):
+
+                stage = 1
+                actual_price = p_entry
+                ep = [actual_price]; ew = [0.30]
+                regime_entry = regime
+                peak_after_buy = actual_price
+                trades.append({
+                    "날짜":   str(row_next["Date"])[:10],
+                    "구분":   "BUY1",
+                    "단계":   f"1차 진입 30% [V7 과매도점수:{v7_score}/4 손익비:{risk_reward:.1f}]",
+                    "가격":   round(actual_price, 2),
+                    "비중":   "30%",
+                    "레짐":   regime,
+                    "피보":   f"Fib {cfg['fib'][0]}",
+                    "수익률": "-",
+                    "비고":   f"슬리피지 반영 | Z:{row.get('ZScore',0):.1f} BB:{int(row.get('BB_touch_low',0))} RSI:{row.get('RSI',50):.0f}",
+                    "_pnl":   0,
+                })
+
+        # ── BUY2/3: 물타기 금지, 모멘텀 회복 불타기만 ──
+        elif stage == 1:
+            recovery = int(row.get("V7_recovery_score", 0))
+            avg = sum(x*w for x,w in zip(ep,ew)) / sum(ew)
+            # 불타기 조건: 모멘텀 회복 2개 이상 + 현재가 BUY1 진입가 위
+            if recovery >= 2 and p > ep[0] * 1.015:
+                stage = 2
+                actual_price2 = p_entry
+                ep.append(actual_price2); ew.append(0.35)
+                avg = sum(x*w for x,w in zip(ep,ew)) / sum(ew)
+                trades.append({
+                    "날짜":   str(row_next["Date"])[:10],
+                    "구분":   "BUY2",
+                    "단계":   f"2차 불타기 35% [모멘텀회복:{recovery}/4]",
+                    "가격":   round(actual_price2, 2),
+                    "비중":   "35%",
+                    "레짐":   regime,
+                    "피보":   "불타기",
+                    "수익률": f"{(actual_price2/ep[0]-1)*100:+.1f}%",
+                    "비고":   f"평균단가 ${avg:.2f}",
+                    "_pnl":   0,
+                })
+
+        elif stage == 2:
+            recovery = int(row.get("V7_recovery_score", 0))
+            # 추가 모멘텀 확인 후 BUY3
+            if recovery >= 3 and p > ep[-1] * 1.01:
+                stage = 3
+                actual_price3 = p_entry
+                ep.append(actual_price3); ew.append(0.35)
+                avg = sum(x*w for x,w in zip(ep,ew)) / sum(ew)
+                trades.append({
+                    "날짜":   str(row_next["Date"])[:10],
+                    "구분":   "BUY3",
+                    "단계":   f"3차 불타기 35% [모멘텀회복:{recovery}/4]",
+                    "가격":   round(actual_price3, 2),
+                    "비중":   "35%",
+                    "레짐":   regime,
+                    "피보":   "불타기",
+                    "수익률": f"{(actual_price3/ep[0]-1)*100:+.1f}%",
+                    "비고":   f"평균단가 ${avg:.2f}",
+                    "_pnl":   0,
+                })
+
+        # ── 청산: 트레일링 스탑 ──────────────────────────
+        if stage > 0:
+            total_w = sum(ew)
+            avg = sum(x*w for x,w in zip(ep,ew)) / total_w
+            cfg_e = REGIME_PARAMS[regime_entry]
+
+            # 최고가 추적
+            if p > peak_after_buy:
+                peak_after_buy = p
+
+            # 손절: 평균단가 기준 or Fib 0.886
+            stop_price   = max(avg * (1 - cfg_e["stop"]), fib886)
+            # 트레일링: 최고가 대비 하락
+            trail_price  = peak_after_buy * (1 - trail_pct)
+            # 익절: 수익 구간에서 트레일링 발동
+            exit_trail   = (p <= trail_price) and (p > avg * 1.05)
+
+            exit_reason = None
+            if p < stop_price:
+                exit_reason = "❌ 손절"
+            elif exit_trail:
+                exit_reason = f"✅ 트레일링 익절 (고점${peak_after_buy:.2f} 대비 -{trail_pct*100:.0f}%)"
+
+            if exit_reason:
+                pnl = (p - avg) / avg
+                capital *= (1 + pnl * total_w)
+                if pnl < 0:
+                    loss_streak += 1
+                    if loss_streak >= 2: cooldown = 10
+                else:
+                    loss_streak = 0
+                trades.append({
+                    "날짜":   str(row["Date"])[:10],
+                    "구분":   "SELL",
+                    "단계":   exit_reason,
+                    "가격":   round(p, 2),
+                    "비중":   f"전량 ({stage}단계)",
+                    "레짐":   regime,
+                    "피보":   "청산",
+                    "수익률": f"{pnl*100:+.1f}%",
+                    "비고":   f"평균단가 ${avg:.2f}",
+                    "_pnl":   pnl,
+                })
+                stage=0; ep=[]; ew=[]; peak_after_buy=0
+
+    # ── 성과 계산 ──
+    sells = [t for t in trades if t["구분"]=="SELL"]
+    if not sells: return trades, {}
+
+    pnls   = np.array([t["_pnl"] for t in sells])
+    wins   = pnls[pnls>0]; losses=pnls[pnls<=0]
+    equity = np.cumprod(1+pnls)
+    peak   = np.maximum.accumulate(equity)
+    mdd    = float(((equity-peak)/peak).min()*100)
+    wr     = len(wins)/len(pnls)*100
+
+    buy1_dates = pd.to_datetime([t["날짜"] for t in trades if t["구분"]=="BUY1"])
+    sell_dates = pd.to_datetime([t["날짜"] for t in sells])
+    n_years = max((sell_dates[-1]-buy1_dates[0]).days/365.25, 0.08) if len(buy1_dates)>0 else 0.5
+    cagr   = (equity[-1]**(1/n_years)-1)*100
+    sharpe = float(np.mean(pnls)/np.std(pnls)*np.sqrt(max(len(pnls),2))) if (np.std(pnls)>0 and len(pnls)>=3) else 0
+    calmar = cagr/abs(mdd) if mdd!=0 else 0
+
+    b1 = [t for t in trades if t["구분"]=="BUY1"]
+    b2 = [t for t in trades if t["구분"]=="BUY2"]
+    b3 = [t for t in trades if t["구분"]=="BUY3"]
+
+    metrics = {
+        "총 완결 거래":  len(sells),
+        "BUY1 진입":    len(b1),
+        "BUY2 불타기":  len(b2),
+        "BUY3 불타기":  len(b3),
+        "BUY2 물타기":  0,
+        "BUY3 물타기":  0,
+        "익절":         len(wins),
+        "손절":         len(losses),
+        "승률":         f"{wr:.1f}%",
+        "총 수익률":    f"{(equity[-1]-1)*100:.1f}%",
+        "CAGR":         f"{cagr:.1f}%",
+        "MDD":          f"{mdd:.1f}%",
+        "Sharpe":       f"{sharpe:.2f}",
+        "Calmar":       f"{calmar:.2f}",
+        "평균 익절":    f"{np.mean(wins)*100:.1f}%" if len(wins)>0 else "-",
+        "평균 손절":    f"{np.mean(losses)*100:.1f}%" if len(losses)>0 else "-",
+        "슬리피지":     f"{slippage*100:.1f}%",
+        "트레일링":     f"-{trail_pct*100:.0f}%",
+    }
+    return trades, metrics
+
 
 def run_momentum_backtest(df, trailing_stop=False, trail_pct=0.07):
     """
@@ -1346,8 +1617,9 @@ with st.sidebar:
              "V3 — AI 점수 필터 추가",
              "V4 — 물타기/불타기 (현재 전략)",
              "V5 — 조건 완화 + 현실 익절",
-             "V6 — 고변동성 모멘텀"],
-            index=4,
+             "V6 — 고변동성 모멘텀",
+             "V7 — 과매도 역추세 (권장)"],
+            index=6,
             label_visibility="collapsed",
         )
         st.markdown("---")
@@ -1392,7 +1664,7 @@ with st.sidebar:
 # 백테스트 탭 외 메뉴에서 변수 미정의 오류 방지
 # session_state 대신 Python 변수로 안전하게 초기화
 if menu != "📊 백테스트":
-    bt_version   = "V5 — 조건 완화 + 현실 익절"
+    bt_version   = "V7 — 과매도 역추세 (권장)"
     bt_score_thr = 40
     bt_trailing  = False
     bt_trail_pct = 0.10
@@ -1876,6 +2148,72 @@ elif menu=="🔍 종목 분석" and analyze_btn:
             "설명":        st.column_config.TextColumn("설명",       width="large"),
         })
 
+    # ── 내일 지정가 주문 가격표 ─────────────────────────────
+    st.markdown("#### 📋 내일 지정가 주문 가격표")
+    st.caption("오늘 저녁 분석 → 내일 장 전에 아래 가격으로 지정가 주문")
+
+    # V7 과매도 점수 확인
+    v7_score_now = int(res["row"].get("V7_oversold_score", 0)) if "V7_oversold_score" in res["row"] else 0
+    bull_now     = int(res["row"].get("BullCandle", 0)) if "BullCandle" in res["row"] else 0
+    zscore_now   = float(res["row"].get("ZScore", 0)) if "ZScore" in res["row"] else 0
+    rsi_now      = float(res["row"].get("RSI", 50)) if "RSI" in res["row"] else 50
+    bb_now       = int(res["row"].get("BB_touch_low", 0)) if "BB_touch_low" in res["row"] else 0
+
+    # 슬리피지 반영 진입가 (현재가 기준 예시)
+    slip = 0.002
+    b1_order = res["fib_lv"][0]
+    b2_order = res["fib_lv"][1]
+    b3_order = res["fib_lv"][2]
+
+    if b1_order:
+        b1_slip = b1_order * (1 + slip)
+        stop_order = res["stop_s"] if res["stop_s"] else b1_order * (1 - res["cfg"]["stop"])
+        tp_order   = b1_order * (1 + res["cfg"]["tp"])
+
+        # V7 조건 충족 여부
+        v7_ready = v7_score_now >= 2 and bull_now == 1
+        rr = (tp_order - b1_slip) / (b1_slip - stop_order) if (b1_slip - stop_order) > 0 else 0
+
+        order_color = "#00ff9d" if v7_ready and rr >= 2.5 else "#ffd700" if v7_ready else "#6b7280"
+        order_status = "✅ 조건 충족 — 주문 가능" if (v7_ready and rr >= 2.5) else                        "⚠️ 과매도 조건 미충족 — 대기" if not v7_ready else                        f"⚠️ 손익비 {rr:.1f} — 2.5 미만, 진입 비권장"
+
+        st.markdown(f"""
+        <div style="background:#0f172a;border:2px solid {order_color};
+                    border-radius:12px;padding:16px;margin-bottom:12px">
+          <div style="color:{order_color};font-weight:700;margin-bottom:12px">
+            {order_status}
+          </div>
+          <div style="color:#6b7280;font-size:.74rem;margin-bottom:8px">
+            V7 과매도 점수: {v7_score_now}/4 &nbsp;|&nbsp;
+            Z-Score: {zscore_now:.2f} &nbsp;|&nbsp;
+            RSI: {rsi_now:.0f} &nbsp;|&nbsp;
+            BB하단: {"✅" if bb_now else "❌"} &nbsp;|&nbsp;
+            양봉: {"✅" if bull_now else "❌"} &nbsp;|&nbsp;
+            손익비: {rr:.1f}배
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px">
+            <div style="background:#111827;border-radius:8px;padding:10px;text-align:center">
+              <div style="color:#6b7280;font-size:.7rem">🟢 BUY1 지정가</div>
+              <div style="color:#00ff9d;font-weight:700;font-size:1rem">${b1_slip:.2f}</div>
+              <div style="color:#6b7280;font-size:.68rem">슬리피지 0.2% 포함</div>
+            </div>
+            <div style="background:#111827;border-radius:8px;padding:10px;text-align:center">
+              <div style="color:#6b7280;font-size:.7rem">🔴 손절 스탑로스</div>
+              <div style="color:#ff4757;font-weight:700;font-size:1rem">${stop_order:.2f}</div>
+              <div style="color:#6b7280;font-size:.68rem">체결 즉시 걸기</div>
+            </div>
+            <div style="background:#111827;border-radius:8px;padding:10px;text-align:center">
+              <div style="color:#6b7280;font-size:.7rem">🎯 익절 지정가</div>
+              <div style="color:#ffd700;font-weight:700;font-size:1rem">${tp_order:.2f}</div>
+              <div style="color:#6b7280;font-size:.68rem">트레일링 또는 고정</div>
+            </div>
+          </div>
+          <div style="margin-top:10px;color:#6b7280;font-size:.72rem;line-height:1.8">
+            📌 BUY2/3는 반등 확인 후 불타기 — 모멘텀 회복 신호 2개 이상 시 추가 매수
+          </div>
+        </div>""", unsafe_allow_html=True)
+    else:
+        st.info("⏳ 현재 피보나치 BUY 구간 미형성 — 조정 후 재분석")
     st.markdown("---")
 
     # ════════════════════════════════════════════════════════════
@@ -3146,15 +3484,23 @@ elif menu=="📊 백테스트" and bt_btn:
 
     # V6 선택 시에만 모멘텀 전략 → 나머지는 항상 피보나치
     auto_momentum = (strategy_type == "momentum")
+    auto_v7       = (strategy_type == "v7")
 
     with st.spinner(f"🧪 {ticker_input} [{bt_version}] 백테스트 계산 중..."):
-        if auto_momentum and strategy_type=="momentum":
+        if auto_v7:
+            trades, metrics = run_v7_backtest(
+                res["df"],
+                slippage  = 0.002,
+                trail_pct = bt_trail_pct if bt_trailing else 0.15,
+            )
+            actual_strategy = "V7 과매도 역추세 전략"
+        elif auto_momentum:
             trades, metrics = run_momentum_backtest(
                 res["df"],
                 trailing_stop=bt_trailing,
                 trail_pct=bt_trail_pct,
             )
-            actual_strategy="모멘텀 추격 전략"
+            actual_strategy = "모멘텀 추격 전략"
         else:
             trades, metrics = run_backtest(
                 res["df"],
@@ -3166,7 +3512,7 @@ elif menu=="📊 백테스트" and bt_btn:
                 trailing_stop= bt_trailing,
                 trail_pct    = bt_trail_pct,
             )
-            actual_strategy="피보나치 분할매수 전략"
+            actual_strategy = "피보나치 분할매수 전략"
 
     st.markdown(f"### 📊 {ticker_input} 백테스트 결과 ({period_input})")
 
