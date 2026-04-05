@@ -1295,6 +1295,10 @@ def quick_backtest(df, strategy):
         cagr = float(cagr_str) if cagr_str not in ["-","nan"] else 0
         mdd  = float(metrics.get("MDD","0%").replace("%",""))
 
+        # 거래 3건 미만이면 CAGR 신뢰 불가 — 표시용으로만 사용
+        if n < 3:
+            cagr = cagr  # 표시는 하되 등급에서 제외
+
         # 신뢰도 등급 (거래 수 기반)
         if n < 3:
             grade = "⚠️ 데이터 부족"
@@ -1574,7 +1578,11 @@ def run_v7_backtest(df, slippage=0.002, trail_pct=0.15):
 
     buy1_dates = pd.to_datetime([t["날짜"] for t in trades if t["구분"]=="BUY1"])
     sell_dates = pd.to_datetime([t["날짜"] for t in sells])
-    n_years = max((sell_dates[-1]-buy1_dates[0]).days/365.25, 0.08) if len(buy1_dates)>0 else 0.5
+    # 거래 3건 미만이면 전체 데이터 기간으로 CAGR 계산 (단기 거래 과장 방지)
+    if len(sells) < 3:
+        n_years = max(len(df) / 252, 0.5)
+    else:
+        n_years = max((sell_dates[-1]-buy1_dates[0]).days/365.25, 0.5) if len(buy1_dates)>0 else 1.0
     cagr   = (equity[-1]**(1/n_years)-1)*100
     sharpe = float(np.mean(pnls)/np.std(pnls)*np.sqrt(max(len(pnls),2))) if (np.std(pnls)>0 and len(pnls)>=3) else 0
     calmar = cagr/abs(mdd) if mdd!=0 else 0
@@ -1694,7 +1702,10 @@ def run_momentum_backtest(df, trailing_stop=False, trail_pct=0.07):
     wr=len(wins)/len(pnls)*100
     buy1_dates=pd.to_datetime([t["날짜"] for t in trades if t["구분"]=="BUY"])
     sell_dates=pd.to_datetime([t["날짜"] for t in sells])
-    n_years=max((sell_dates[-1]-buy1_dates[0]).days/365.25,0.08) if len(buy1_dates)>0 else 0.5
+    if len(sells) < 3:
+        n_years = max(len(df) / 252, 0.5)
+    else:
+        n_years = max((sell_dates[-1]-buy1_dates[0]).days/365.25, 0.5) if len(buy1_dates)>0 else 1.0
     cagr=(equity[-1]**(1/n_years)-1)*100
     sharpe=float(np.mean(pnls)/np.std(pnls)*np.sqrt(len(pnls))) if np.std(pnls)>0 else 0
     calmar=cagr/abs(mdd) if mdd!=0 else 0
@@ -1933,7 +1944,10 @@ def run_backtest(df, score_thr=40, use_stoch=True, trailing_stop=False, trail_pc
     if len(buy1_dates) > 0 and len(sell_dates) > 0:
         start_d = buy1_dates[0]
         end_d   = sell_dates[-1]
-        n_years = max((end_d - start_d).days / 365.25, 0.08)
+        if len(sells) < 3:
+            n_years = max(len(df) / 252, 0.5)
+        else:
+            n_years = max((end_d - start_d).days / 365.25, 0.5)
     else:
         n_years = 0.5
     cagr   = (equity[-1] ** (1 / n_years) - 1) * 100
