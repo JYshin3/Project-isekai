@@ -99,6 +99,166 @@ HIGH_VOL_TICKERS = [
     "VRT","SMCI","APP","RBLX","SOFI","HOOD",
 ]
 
+# ════════════════════════════════════════════════════════════
+# 섹터 모멘텀 필터 / VIX 필터 / 어닝 필터
+# ════════════════════════════════════════════════════════════
+
+# 종목 → 섹터 ETF 매핑
+SECTOR_MAP = {
+    # 테크
+    "AAPL":"XLK","MSFT":"XLK","GOOGL":"XLK","META":"XLK",
+    "NVDA":"SOXX","AMD":"SOXX","INTC":"SOXX","MU":"SOXX",
+    "AVGO":"SOXX","QCOM":"SOXX","AMAT":"SOXX","KLAC":"SOXX",
+    "ARM":"SOXX","SMCI":"SOXX","MRVL":"SOXX","ADI":"SOXX",
+    # 소프트웨어
+    "CRM":"XLK","ADBE":"XLK","NOW":"XLK","ORCL":"XLK",
+    "PANW":"XLK","CRWD":"XLK","DDOG":"XLK","SNOW":"XLK",
+    "PLTR":"XLK","ZS":"XLK","FTNT":"XLK",
+    # 소비자
+    "AMZN":"XLY","TSLA":"XLY","NFLX":"XLY","DIS":"XLY",
+    "SBUX":"XLY","NKE":"XLY","BKNG":"XLY","MAR":"XLY",
+    "HD":"XLY","LOW":"XLY","TGT":"XLY","COST":"XLP",
+    "MCD":"XLP","KO":"XLP","PG":"XLP","WMT":"XLP",
+    # 금융
+    "JPM":"XLF","GS":"XLF","BAC":"XLF","MS":"XLF",
+    "BLK":"XLF","V":"XLF","MA":"XLF","AXP":"XLF",
+    "C":"XLF","WFC":"XLF","SCHW":"XLF","CME":"XLF","ICE":"XLF",
+    # 헬스케어
+    "UNH":"XLV","LLY":"XLV","JNJ":"XLV","PFE":"XLV",
+    "ABBV":"XLV","MRK":"XLV","AMGN":"XLV","GILD":"XLV",
+    # 에너지
+    "XOM":"XLE","CVX":"XLE","COP":"XLE","EOG":"XLE",
+    "SLB":"XLE","OXY":"XLE",
+    # 귀금속/안전자산
+    "GLD":"GLD","IAU":"GLD","SLV":"SLV","GDX":"GDX",
+    "TLT":"TLT","IEF":"IEF","BIL":"BIL",
+    # 인버스 ETF → 섹터 필터 제외 (항상 허용)
+    "SQQQ":None,"SPXS":None,"SOXS":None,"SDOW":None,
+    "SH":None,"PSQ":None,"VIXY":None,
+}
+
+@st.cache_data(ttl=1800)
+def get_sector_regime(sector_etf):
+    """섹터 ETF 레짐 확인"""
+    if sector_etf is None:
+        return "OK"  # 인버스 ETF는 항상 허용
+    try:
+        df = yf.download(sector_etf, period="1y", interval="1d",
+                         auto_adjust=True, progress=False)
+        if df.empty or len(df) < 60: return "UNKNOWN"
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        close = df["Close"]
+        ma200 = close.rolling(min(200,len(close))).mean().iloc[-1]
+        ma50  = close.rolling(50).mean().iloc[-1]
+        roc20 = float((close.iloc[-1]/close.iloc[-21]-1)*100) if len(close)>21 else 0
+        curr  = float(close.iloc[-1])
+        if curr > ma200 and roc20 > -5:
+            return "OK"       # 섹터 정상
+        elif curr < ma200 and roc20 < -5:
+            return "WEAK"     # 섹터 하락 — 진입 주의
+        else:
+            return "CAUTION"  # 섹터 주의
+    except Exception:
+        return "UNKNOWN"
+
+@st.cache_data(ttl=3600)
+def get_vix_level():
+    """VIX 현재 수준 확인"""
+    try:
+        vix = yf.download("^VIX", period="5d", interval="1d",
+                          auto_adjust=True, progress=False)
+        if vix.empty: return 20, "정상"
+        if isinstance(vix.columns, pd.MultiIndex):
+            vix.columns = vix.columns.get_level_values(0)
+        v = float(vix["Close"].dropna().iloc[-1])
+        if v >= 30:
+            return v, "극단 공포 🔴"
+        elif v >= 25:
+            return v, "공포 🟠"
+        elif v >= 20:
+            return v, "주의 🟡"
+        else:
+            return v, "정상 🟢"
+    except Exception:
+        return 20, "확인 불가"
+
+@st.cache_data(ttl=3600)
+def get_earnings_info_simple(ticker):
+    """어닝 발표일 확인 (간소화)"""
+    try:
+        tk = yf.Ticker(ticker)
+        cal = tk.calendar
+        if cal is None or (isinstance(cal, dict) and not cal):
+            return None, None
+        if isinstance(cal, pd.DataFrame):
+            cal = cal.to_dict()
+        # 어닝 날짜 추출
+        earn_date = None
+        for key in ["Earnings Date","earningsDate","earnings_date"]:
+            if key in cal:
+                val = cal[key]
+                if hasattr(val, '__iter__') and not isinstance(val, str):
+                    val = list(val)
+                    if val: earn_date = pd.Timestamp(val[0]).date()
+                else:
+                    earn_date = pd.Timestamp(val).date()
+                break
+        if earn_date is None: return None, None
+        days_left = (earn_date - datetime.date.today()).days
+        return earn_date, days_left
+    except Exception:
+        return None, None
+
+def check_filters(ticker, regime):
+    """
+    3가지 필터 동시 확인
+    returns: {vix_val, vix_label, sector_status, earn_date, days_left, warnings}
+    """
+    warnings = []
+
+    # VIX 필터
+    vix_val, vix_label = get_vix_level()
+    if vix_val >= 30:
+        warnings.append(f"🔴 VIX {vix_val:.0f} — 극단 공포. V6 모멘텀 금지, V7/현금만")
+    elif vix_val >= 25:
+        warnings.append(f"🟠 VIX {vix_val:.0f} — 공포 구간. 신규 진입 신중")
+
+    # 섹터 필터
+    sector_etf = SECTOR_MAP.get(ticker.upper())
+    sector_status = get_sector_regime(sector_etf)
+    sector_name   = sector_etf if sector_etf else "해당없음"
+    if sector_status == "WEAK":
+        warnings.append(f"📉 섹터({sector_name}) 하락 중 — 진입 위험")
+    elif sector_status == "CAUTION":
+        warnings.append(f"⚠️ 섹터({sector_name}) 주의 — 소량만 진입")
+
+    # 어닝 필터
+    earn_date, days_left = get_earnings_info_simple(ticker)
+    if days_left is not None:
+        if 0 <= days_left <= 5:
+            warnings.append(f"⚠️ 어닝 {days_left}일 후 ({earn_date}) — 진입 금지")
+        elif -3 <= days_left < 0:
+            warnings.append(f"📊 어닝 {abs(days_left)}일 전 발표 완료 ({earn_date})")
+        elif days_left <= 10:
+            warnings.append(f"📅 어닝 {days_left}일 후 ({earn_date}) — 주의")
+
+    return {
+        "vix_val":       vix_val,
+        "vix_label":     vix_label,
+        "sector_etf":    sector_name,
+        "sector_status": sector_status,
+        "earn_date":     earn_date,
+        "days_left":     days_left,
+        "warnings":      warnings,
+        "block_entry":   (
+            vix_val >= 30 or
+            sector_status == "WEAK" or
+            (days_left is not None and 0 <= days_left <= 5)
+        ),
+    }
+
+
 def classify_ticker_type(ticker, df=None):
     """
     종목이 저변동성인지 고변동성인지 판단
@@ -489,6 +649,17 @@ def scan_single(ticker):
         price  = float(row["Close"])
         regime = row["Regime"]
         if regime == "UNKNOWN": return None
+
+        # ── 섹터 필터 ─────────────────────────────────────
+        sector_etf = SECTOR_MAP.get(ticker.upper())
+        sector_st  = get_sector_regime(sector_etf) if sector_etf else "OK"
+        # 섹터 하락 중이면 스캔 제외 (인버스 ETF는 제외 안 함)
+        if sector_st == "WEAK" and ticker.upper() not in [
+            "SQQQ","SPXS","SOXS","SDOW","SH","PSQ","VIXY","SRTY",
+            "GLD","IAU","SLV","GDX","TLT","IEF","BIL","SGOV"
+        ]:
+            return None  # 섹터 하락 → 스캔 제외
+
         # DOWNtrend는 제외 안 하고 신호에서 표시
         # (피보나치/모멘텀 모두 불가하면 나중에 return None)
 
@@ -716,6 +887,8 @@ def scan_single(ticker):
             "total_rec_score": total_rec_score,
             "v7_score":      v7_score,
             "v7_ready":      v7_ready,
+            "sector_status": sector_st,
+            "sector_etf":    sector_etf or "N/A",
             "style_result":  classify_stock_style(df),
         }
     except Exception:
@@ -727,16 +900,13 @@ def analyze(ticker, period="1y"):
     try:
         # MA200 계산 + 백테스트에 최소 252봉 필요
         # 1y = 252봉 → START=200 이후 거래 구간 52봉뿐 → 자동 2y 확장
-        # 백테스트 정확도를 위해 최소 2y 확보
-        # MA200(1년) + 백테스트 실행 구간 필요
-        if period in ["6mo","1y"]:
-            actual_period = "2y"
-        elif period == "3y":
-            actual_period = "3y"
-        elif period == "5y":
-            actual_period = "5y"
-        else:
-            actual_period = "2y"
+        # 기간별 실제 다운로드:
+        # 6mo/1y → 2y (MA200 계산 최소 200봉 필요)
+        # 2y → 2y
+        # 3y → 3y
+        # 5y → 5y
+        period_map = {"6mo":"2y","1y":"2y","2y":"2y","3y":"3y","5y":"5y"}
+        actual_period = period_map.get(period, "2y")
         df=yf.download(ticker,period=actual_period,interval="1d",auto_adjust=True,progress=False)
         if df.empty or len(df)<80: return None
         if isinstance(df.columns,pd.MultiIndex): df.columns=df.columns.get_level_values(0)
@@ -1837,6 +2007,7 @@ with st.sidebar:
         ticker_input=st.text_input("티커 입력",value="AAPL",
             placeholder="예: AAPL, TSLA, NVDA").upper().strip()
         period_input=st.selectbox("기간",["6mo","1y","2y","3y","5y"],index=2)
+        st.caption("종목분석: 차트/레짐 기간 | 백테스트: 성과 계산 기간")
     if menu=="🤖 AI 종목 추천":
         st.markdown("**스캔 방식 선택**")
         scan_mode = st.radio("",
@@ -2059,7 +2230,62 @@ elif menu=="🔍 종목 분석" and analyze_btn:
     if res is None:
         st.error("데이터를 가져올 수 없습니다. 티커를 확인하세요."); st.stop()
 
+    actual_label = {"6mo":"6개월","1y":"1년","2y":"2년","3y":"3년","5y":"5년"}.get(period_input,"2년")
     st.markdown(f"### 🔍 {ticker_input} 분석 결과")
+    st.caption(f"📅 분석 기간: {actual_label} 데이터 기준 (종가 기준: {datetime.date.today()})")
+
+    # ── 3가지 필터 확인 ─────────────────────────────────
+    with st.spinner("🛡️ VIX / 섹터 / 어닝 필터 확인 중..."):
+        filters = check_filters(ticker_input, res["regime"])
+
+    # 필터 상태 카드
+    vix_color = "#ff4757" if filters["vix_val"]>=30 else                 "#ff8c00" if filters["vix_val"]>=25 else                 "#ffd700" if filters["vix_val"]>=20 else "#00ff9d"
+    sec_color = "#ff4757" if filters["sector_status"]=="WEAK" else                 "#ffd700" if filters["sector_status"]=="CAUTION" else "#00ff9d"
+    earn_days = filters["days_left"]
+    earn_color = "#ff4757" if (earn_days is not None and 0<=earn_days<=5) else                  "#ffd700" if (earn_days is not None and earn_days<=10) else "#00ff9d"
+    earn_txt  = f"{earn_days}일 후" if earn_days is not None and earn_days>=0 else                 f"{abs(earn_days)}일 전 완료" if earn_days is not None else "확인불가"
+
+    fc1, fc2, fc3 = st.columns(3)
+    fc1.markdown(f"""
+    <div style="background:#111827;border-radius:8px;padding:10px;text-align:center;
+                border:1px solid {vix_color}44">
+      <div style="color:#6b7280;font-size:.7rem">VIX 공포지수</div>
+      <div style="color:{vix_color};font-weight:700;font-size:1.1rem">
+        {filters["vix_val"]:.1f}
+      </div>
+      <div style="color:{vix_color};font-size:.72rem">{filters["vix_label"]}</div>
+    </div>""", unsafe_allow_html=True)
+    fc2.markdown(f"""
+    <div style="background:#111827;border-radius:8px;padding:10px;text-align:center;
+                border:1px solid {sec_color}44">
+      <div style="color:#6b7280;font-size:.7rem">섹터 ({filters["sector_etf"]})</div>
+      <div style="color:{sec_color};font-weight:700;font-size:1.1rem">
+        {"❌ 하락" if filters["sector_status"]=="WEAK" else
+         "⚠️ 주의" if filters["sector_status"]=="CAUTION" else "✅ 정상"}
+      </div>
+      <div style="color:{sec_color};font-size:.72rem">{filters["sector_status"]}</div>
+    </div>""", unsafe_allow_html=True)
+    fc3.markdown(f"""
+    <div style="background:#111827;border-radius:8px;padding:10px;text-align:center;
+                border:1px solid {earn_color}44">
+      <div style="color:#6b7280;font-size:.7rem">어닝 발표</div>
+      <div style="color:{earn_color};font-weight:700;font-size:1.1rem">{earn_txt}</div>
+      <div style="color:{earn_color};font-size:.72rem">
+        {"⚠️ 진입 금지" if earn_days is not None and 0<=earn_days<=5 else
+         "📅 주의" if earn_days is not None and earn_days<=10 else "✅ 이상없음"}
+      </div>
+    </div>""", unsafe_allow_html=True)
+
+    # 경고 메시지
+    if filters["warnings"]:
+        for w in filters["warnings"]:
+            st.warning(w)
+
+    # 진입 금지 배너
+    if filters["block_entry"]:
+        st.error("🚫 현재 진입 금지 조건 충족 — 위 경고 확인 후 진입 여부 결정")
+
+    st.markdown("---")
 
     # ════════════════════════════════════════════════════════
     # Style Detector + 3전략 백테스트 비교
@@ -3704,8 +3930,13 @@ elif menu=="🤖 AI 종목 추천" and scan_btn:
         "상승장": "🚀", "박스장": "➡️",
         "조정장": "⚠️", "하락장": "🔴", "알 수 없음": "❓"
     }
+    # VIX도 동시에 확인
+    vix_now, vix_lbl = get_vix_level()
+
     rc = regime_colors.get(market_regime, "#6b7280")
     ri = regime_icons.get(market_regime, "❓")
+    vix_c = "#ff4757" if vix_now>=30 else "#ff8c00" if vix_now>=25 else             "#ffd700" if vix_now>=20 else "#00ff9d"
+
     st.markdown(f"""
     <div style="background:#0f172a;border:2px solid {rc};
                 border-radius:12px;padding:14px 16px;margin-bottom:16px">
@@ -3718,10 +3949,14 @@ elif menu=="🤖 AI 종목 추천" and scan_btn:
             SPY 기준 MA200·MA50·ROC 종합 판단
           </div>
         </div>
-        <div style="color:#6b7280;font-size:.76rem;text-align:right">
-          {"📈 일반 종목 추천" if market_regime in ["상승장","박스장"] else "🛡️ 하락장 대응 종목 우선 표시"}
+        <div style="text-align:right">
+          <div style="color:{vix_c};font-weight:700;font-size:1rem">
+            VIX {vix_now:.1f}
+          </div>
+          <div style="color:{vix_c};font-size:.75rem">{vix_lbl}</div>
         </div>
       </div>
+      {f'<div style="margin-top:8px;padding:6px 10px;background:#1a0000;border-radius:6px;color:#ff4757;font-size:.78rem">🚫 VIX {vix_now:.0f} 극단 공포 — V6 모멘텀 진입 금지, V7/현금 보유 권장</div>' if vix_now>=30 else ''}
     </div>""", unsafe_allow_html=True)
 
     # ── 하락장/조정장일 때 → 하락장 대응 섹션 먼저 표시 ──
