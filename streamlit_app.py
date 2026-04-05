@@ -2107,44 +2107,9 @@ elif menu=="🔍 종목 분석" and analyze_btn:
       </div>
     </div>""", unsafe_allow_html=True)
 
-    # ── 3전략 백테스트 비교표 ──
-    st.markdown("#### 📊 3전략 백테스트 비교 (자동)")
-    st.caption("동일 종목에 3가지 전략 적용 → 어떤 전략이 최적인지 자동 비교")
-
-    compare_rows = []
-    for strat_name, bt_result, is_best in [
-        ("📐 V5 피보나치", bt_v5, best_strat.startswith("V5")),
-        ("🚀 V6 모멘텀",   bt_v6, best_strat.startswith("V6")),
-        ("🎯 V7 역추세",   bt_v7, best_strat.startswith("V7")),
-    ]:
-        if bt_result:
-            compare_rows.append({
-                "전략":    f"{'⭐ ' if is_best else ''}{strat_name}",
-                "거래수":  bt_result["trades"],
-                "승률":    f"{bt_result['wr']:.1f}%",
-                "CAGR":    f"{bt_result['cagr']:+.1f}%",
-                "MDD":     f"{bt_result['mdd']:.1f}%",
-                "등급":    bt_result["grade"],
-                "추천":    "✅ Style 추천" if is_best else "",
-            })
-        else:
-            compare_rows.append({
-                "전략": strat_name, "거래수": 0,
-                "승률":"-","CAGR":"-","MDD":"-",
-                "등급":"⚠️ 데이터 부족","추천":"",
-            })
-
-    df_compare = pd.DataFrame(compare_rows)
-    st.dataframe(df_compare, use_container_width=True, hide_index=True,
-        column_config={
-            "전략":   st.column_config.TextColumn("전략",  width="medium"),
-            "거래수": st.column_config.NumberColumn("거래수",width="small"),
-            "승률":   st.column_config.TextColumn("승률",  width="small"),
-            "CAGR":   st.column_config.TextColumn("CAGR",  width="small"),
-            "MDD":    st.column_config.TextColumn("MDD",   width="small"),
-            "등급":   st.column_config.TextColumn("등급",  width="small"),
-            "추천":   st.column_config.TextColumn("추천",  width="small"),
-        })
+    # ── 3전략 백테스트 비교표 (최종 추천 반영) ──
+    st.markdown("#### 📊 3전략 백테스트 비교")
+    st.caption("⭐ 최종추천: 백테스트 성과 기반 | 📌 성향추천: Style Detector 기반")
 
     # ── 최종 전략 결정: 백테스트 성과 우선 ──────────────
     bt_candidates = [
@@ -2205,20 +2170,54 @@ elif menu=="🔍 종목 분석" and analyze_btn:
             "추천":   st.column_config.TextColumn(width="small"),
         })
 
-    # 최종 추천 이유 박스
-    final_color  = "#00ff9d" if final_bt and final_bt.get("cagr",0)>=30 else "#ffd700"
-    style_match  = "✅ 성향과 일치" if final_strat_name==best_strat else "⚡ 성향과 다르나 백테스트 성과 우수"
-    final_label  = icon_map.get(final_strat_name, final_strat_name)
+    # ── 추천 기준 설명 ──────────────────────────────────
+    st.caption(
+        "추천 기준: 거래 3건 이상 전략 중 "
+        "CAGR 50% + 승률 30% + MDD 20% 종합 점수 최고 전략 선택. "
+        "거래 3건 미만은 통계 신뢰도 부족으로 제외."
+    )
+
+    # ── 최종 추천 이유 박스 ─────────────────────────────
+    final_color = "#00ff9d" if final_bt and final_bt.get("cagr",0)>=30 else "#ffd700"
+    style_match = "✅ 성향과 일치" if final_strat_name==best_strat else "⚡ 성향과 다르나 백테스트 성과 우수"
+    final_label = icon_map.get(final_strat_name, final_strat_name)
+
+    # 추천 이유 상세 설명
+    if final_source == "종목 성향 기반 (백테스트 데이터 부족)":
+        rec_detail = "모든 전략 거래 3건 미만 — 기간을 늘려서 재백테스트 권장 (3y 이상)"
+    else:
+        rec_detail = (
+            f"거래 {final_bt['trades']}건 | 승률 {final_bt['wr']}% | "
+            f"CAGR {final_bt['cagr']:+.0f}% | MDD {final_bt['mdd']:.0f}%"
+            if final_bt and final_bt.get('trades',0)>=3 else ""
+        )
+
+    # 다른 전략과 비교 설명
+    all_valid = [(n, b) for n, b in bt_candidates if b and b["trades"]>=3]
+    compare_note = ""
+    if len(all_valid) > 1:
+        others = [(n,b) for n,b in all_valid if n != final_strat_name]
+        if others:
+            other_name, other_bt = others[0]
+            other_label = icon_map.get(other_name, other_name)
+            compare_note = (
+                f"• 비교: {other_label} — "
+                f"승률 {other_bt['wr']}% | CAGR {other_bt['cagr']:+.0f}% "
+                f"→ 종합 점수 낮아 제외"
+            )
+
     st.markdown(f"""
     <div style="background:#0f172a;border:2px solid {final_color};
                 border-radius:10px;padding:14px;margin-top:8px">
-      <div style="color:{final_color};font-weight:700;font-size:.92rem;margin-bottom:6px">
+      <div style="color:{final_color};font-weight:700;font-size:.92rem;margin-bottom:8px">
         ⭐ 최종 추천: {final_label}
       </div>
-      <div style="color:#9ca3af;font-size:.78rem;line-height:1.9">
-        • 근거: {final_source} ({style_match})<br>
-        • 종목 성향: {style_name} — {", ".join(reasons[:2])}<br>
-        {"• 백테스트: 거래 " + str(final_bt['trades']) + "건 | 승률 " + str(final_bt['wr']) + "% | CAGR " + f"{final_bt['cagr']:+.0f}%" if final_bt and final_bt.get('trades',0)>=3 else "• 백테스트 거래 부족 — 더 긴 기간으로 재시도 권장"}
+      <div style="color:#9ca3af;font-size:.78rem;line-height:2">
+        • 근거: {final_source}<br>
+        • 종목 성향: {style_name} ({", ".join(reasons[:2])})<br>
+        • 백테스트: {rec_detail}<br>
+        {"• " + style_match + "<br>" if final_strat_name != best_strat else ""}
+        {compare_note}
       </div>
     </div>""", unsafe_allow_html=True)
     st.markdown("---")
