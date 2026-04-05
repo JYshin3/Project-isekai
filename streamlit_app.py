@@ -2439,138 +2439,25 @@ elif menu=="🔍 종목 분석" and analyze_btn:
     st.markdown("#### 📊 3전략 백테스트 비교")
     st.caption("⭐ 최종추천: 백테스트 성과 기반 | 📌 성향추천: Style Detector 기반")
 
-    # ── 최종 전략 결정: 성향 적합도 + 백테스트 종합 ──────
+    # ── 최종 전략 결정은 fib_fit_a/mom_fit_a/v7_fit_a 계산 후 진행 ──
+    # (아래 종목 적합도 섹션에서 계산 후 결정됨)
     bt_candidates = [
         ("V5 — 조건 완화 + 현실 익절", bt_v5),
         ("V6 — 고변동성 모멘텀",       bt_v6),
         ("V7 — 과매도 역추세 (권장)",   bt_v7),
     ]
-    # 적합도 점수 매핑
-    fit_score_map = {
-        "V5 — 조건 완화 + 현실 익절": fib_fit_a,
-        "V6 — 고변동성 모멘텀":       mom_fit_a,
-        "V7 — 과매도 역추세 (권장)":   v7_fit_a,
-    }
     valid_bts = [(n,b) for n,b in bt_candidates if b and b["trades"]>=3]
 
-    if valid_bts:
-        def bt_score_fn(name, b):
-            fit = fit_score_map.get(name, 0)
-            # 백테스트 성과 70% + 적합도 30%
-            perf = b["cagr"]*0.5 + b["wr"]*0.3 + (b["mdd"]/(-50))*20
-            return perf * 0.7 + fit * 0.3
-        final_strat_name, final_bt = max(
-            valid_bts, key=lambda x: bt_score_fn(x[0], x[1])
-        )
-        # 단, 적합도 점수가 20점 이상 차이나면 적합도 우선
-        style_winner = max(fit_score_map, key=fit_score_map.get)
-        bt_winner    = final_strat_name
-        style_score  = fit_score_map[style_winner]
-        bt_fit_score = fit_score_map.get(bt_winner, 0)
-        if style_score - bt_fit_score >= 20:
-            # 성향이 압도적으로 맞는 전략 우선
-            final_strat_name = style_winner
-            final_bt = dict(bt_candidates).get(style_winner)
-            final_source = f"성향 적합도 우선 ({style_winner[:3]}: {style_score}점 vs {bt_winner[:3]}: {bt_fit_score}점)"
-        else:
-            final_source = "백테스트 성과 + 성향 종합"
-    else:
-        # 백테스트 데이터 없으면 성향 점수 최고 전략
-        final_strat_name = max(fit_score_map, key=fit_score_map.get)
-        final_bt = dict(bt_candidates).get(final_strat_name)
-        final_source = f"성향 적합도 기반 ({final_strat_name[:3]}: {fit_score_map[final_strat_name]}점)"
-
-    # 비교표 재출력 — 최종 추천 반영
-    compare_rows_final = []
+    # 비교표 재출력 — 최종 추천 반영 (fit_score_map은 아래서 계산 후 채워짐)
     icon_map = {
         "V5 — 조건 완화 + 현실 익절": "📐 V5 피보나치",
         "V6 — 고변동성 모멘텀":       "🚀 V6 모멘텀",
         "V7 — 과매도 역추세 (권장)":   "🎯 V7 역추세",
     }
-    for strat_name, bt_result in bt_candidates:
-        is_final = strat_name == final_strat_name
-        is_style = strat_name == best_strat
-        tag = "⭐ 최종추천" if is_final else ("📌 성향추천" if is_style else "")
-        label = icon_map.get(strat_name, strat_name)
-        if bt_result:
-            compare_rows_final.append({
-                "전략":   label,
-                "거래수": bt_result["trades"],
-                "승률":   f"{bt_result['wr']:.1f}%",
-                "CAGR":   f"{bt_result['cagr']:+.1f}%",
-                "MDD":    f"{bt_result['mdd']:.1f}%",
-                "등급":   bt_result["grade"],
-                "추천":   tag,
-            })
-        else:
-            compare_rows_final.append({
-                "전략":label,"거래수":0,
-                "승률":"-","CAGR":"-","MDD":"-",
-                "등급":"⚠️ 데이터 부족","추천":tag if is_style else "",
-            })
-
-    st.dataframe(pd.DataFrame(compare_rows_final),
-        use_container_width=True, hide_index=True,
-        column_config={
-            "전략":   st.column_config.TextColumn(width="medium"),
-            "거래수": st.column_config.NumberColumn(width="small"),
-            "승률":   st.column_config.TextColumn(width="small"),
-            "CAGR":   st.column_config.TextColumn(width="small"),
-            "MDD":    st.column_config.TextColumn(width="small"),
-            "등급":   st.column_config.TextColumn(width="small"),
-            "추천":   st.column_config.TextColumn(width="small"),
-        })
-
-    # ── 추천 기준 설명 ──────────────────────────────────
-    st.caption(
-        "추천 기준: 거래 3건 이상 전략 중 "
-        "CAGR 50% + 승률 30% + MDD 20% 종합 점수 최고 전략 선택. "
-        "거래 3건 미만은 통계 신뢰도 부족으로 제외."
-    )
-
-    # ── 최종 추천 이유 박스 ─────────────────────────────
-    final_color = "#00ff9d" if final_bt and final_bt.get("cagr",0)>=30 else "#ffd700"
-    style_match = "✅ 성향과 일치" if final_strat_name==best_strat else "⚡ 성향과 다르나 백테스트 성과 우수"
-    final_label = icon_map.get(final_strat_name, final_strat_name)
-
-    # 추천 이유 상세 설명
-    if final_source == "종목 성향 기반 (백테스트 데이터 부족)":
-        rec_detail = "모든 전략 거래 3건 미만 — 기간을 늘려서 재백테스트 권장 (3y 이상)"
-    else:
-        rec_detail = (
-            f"거래 {final_bt['trades']}건 | 승률 {final_bt['wr']}% | "
-            f"CAGR {final_bt['cagr']:+.0f}% | MDD {final_bt['mdd']:.0f}%"
-            if final_bt and final_bt.get('trades',0)>=3 else ""
-        )
-
-    # 다른 전략과 비교 설명
-    all_valid = [(n, b) for n, b in bt_candidates if b and b["trades"]>=3]
-    compare_note = ""
-    if len(all_valid) > 1:
-        others = [(n,b) for n,b in all_valid if n != final_strat_name]
-        if others:
-            other_name, other_bt = others[0]
-            other_label = icon_map.get(other_name, other_name)
-            compare_note = (
-                f"• 비교: {other_label} — "
-                f"승률 {other_bt['wr']}% | CAGR {other_bt['cagr']:+.0f}% "
-                f"→ 종합 점수 낮아 제외"
-            )
-
-    st.markdown(f"""
-    <div style="background:#0f172a;border:2px solid {final_color};
-                border-radius:10px;padding:14px;margin-top:8px">
-      <div style="color:{final_color};font-weight:700;font-size:.92rem;margin-bottom:8px">
-        ⭐ 최종 추천: {final_label}
-      </div>
-      <div style="color:#9ca3af;font-size:.78rem;line-height:2">
-        • 근거: {final_source}<br>
-        • 종목 성향: {style_name} ({", ".join(reasons[:2])})<br>
-        • 백테스트: {rec_detail}<br>
-        {"• " + style_match + "<br>" if final_strat_name != best_strat else ""}
-        {compare_note}
-      </div>
-    </div>""", unsafe_allow_html=True)
+    # ── 비교표는 fib_fit_a/final_strat_name 계산 후 출력 ──
+    # (아래 종목 적합도 섹션 이후에 표시됨)
+    _compare_placeholder = st.empty()
+    _final_box_placeholder = st.empty()
     st.markdown("---")
 
     # ════════════════════════════════════════════════════════
@@ -3010,11 +2897,100 @@ elif menu=="🔍 종목 분석" and analyze_btn:
         else "피보나치V5" if fib_fit_a >= mom_fit_a
         else "모멘텀V6"
     )
-    fit_score_a   = max(fib_fit_a, mom_fit_a)
+    fit_score_a   = max(fib_fit_a, mom_fit_a, v7_fit_a)
     if fit_score_a >= 80:   fit_grade_a = "🏆 최적"
     elif fit_score_a >= 60: fit_grade_a = "✅ 적합"
     elif fit_score_a >= 40: fit_grade_a = "⚠️ 보통"
     else:                   fit_grade_a = "❌ 부적합"
+
+    # ── 최종 전략 결정: 성향 적합도 + 백테스트 종합 ──────
+    fit_score_map = {
+        "V5 — 조건 완화 + 현실 익절": fib_fit_a,
+        "V6 — 고변동성 모멘텀":       mom_fit_a,
+        "V7 — 과매도 역추세 (권장)":   v7_fit_a,
+    }
+
+    if valid_bts:
+        def bt_score_fn(name, b):
+            fit  = fit_score_map.get(name, 0)
+            perf = b["cagr"]*0.5 + b["wr"]*0.3 + (b["mdd"]/(-50))*20
+            return perf * 0.7 + fit * 0.3
+        final_strat_name, final_bt = max(
+            valid_bts, key=lambda x: bt_score_fn(x[0], x[1])
+        )
+        style_winner = max(fit_score_map, key=fit_score_map.get)
+        bt_winner    = final_strat_name
+        style_score  = fit_score_map[style_winner]
+        bt_fit_score = fit_score_map.get(bt_winner, 0)
+        if style_score - bt_fit_score >= 20:
+            final_strat_name = style_winner
+            final_bt = dict(bt_candidates).get(style_winner)
+            final_source = f"성향 적합도 우선 ({style_winner[:3]}: {style_score}점 vs {bt_winner[:3]}: {bt_fit_score}점)"
+        else:
+            final_source = "백테스트 성과 + 성향 종합"
+    else:
+        final_strat_name = max(fit_score_map, key=fit_score_map.get)
+        final_bt = dict(bt_candidates).get(final_strat_name)
+        final_source = f"성향 적합도 기반 ({final_strat_name[:3]}: {fit_score_map[final_strat_name]}점)"
+
+    # ── 비교표 출력 (여기서 final_strat_name 확정됨) ──────
+    compare_rows_final = []
+    for strat_name, bt_result in bt_candidates:
+        is_final = strat_name == final_strat_name
+        is_style = fit_score_map.get(strat_name, 0) == max(fit_score_map.values())
+        tag = "⭐ 최종추천" if is_final else ("📌 성향추천" if is_style and not is_final else "")
+        label = icon_map.get(strat_name, strat_name)
+        if bt_result:
+            compare_rows_final.append({
+                "전략":   label,
+                "거래수": bt_result["trades"],
+                "승률":   f"{bt_result['wr']:.1f}%",
+                "CAGR":   f"{bt_result['cagr']:+.1f}%",
+                "MDD":    f"{bt_result['mdd']:.1f}%",
+                "등급":   bt_result["grade"],
+                "추천":   tag,
+            })
+        else:
+            compare_rows_final.append({
+                "전략":label, "거래수":0,
+                "승률":"-","CAGR":"-","MDD":"-",
+                "등급":"⚠️ 데이터 부족",
+                "추천": tag,
+            })
+
+    _compare_placeholder.dataframe(pd.DataFrame(compare_rows_final),
+        use_container_width=True, hide_index=True,
+        column_config={
+            "전략":   st.column_config.TextColumn(width="medium"),
+            "거래수": st.column_config.NumberColumn(width="small"),
+            "승률":   st.column_config.TextColumn(width="small"),
+            "CAGR":   st.column_config.TextColumn(width="small"),
+            "MDD":    st.column_config.TextColumn(width="small"),
+            "등급":   st.column_config.TextColumn(width="small"),
+            "추천":   st.column_config.TextColumn(width="small"),
+        })
+    st.caption("추천 기준: 성향 적합도 + 백테스트 성과 종합 | 성향 차이 20점↑이면 성향 우선")
+
+    # ── 최종 추천 이유 박스 ──────────────────────────────
+    final_color2 = "#00ff9d" if final_bt and final_bt.get("cagr",0)>=30 else "#ffd700"
+    final_label2 = icon_map.get(final_strat_name, final_strat_name)
+    rec_detail2  = (
+        f"거래 {final_bt['trades']}건 | 승률 {final_bt['wr']}% | CAGR {final_bt['cagr']:+.0f}%"
+        if final_bt and final_bt.get("trades",0)>=3
+        else "백테스트 데이터 부족 — 5y 기간으로 재시도 권장"
+    )
+    _final_box_placeholder.markdown(f"""
+    <div style="background:#0f172a;border:2px solid {final_color2};
+                border-radius:10px;padding:14px;margin-top:4px">
+      <div style="color:{final_color2};font-weight:700;font-size:.92rem;margin-bottom:6px">
+        ⭐ 최종 추천: {final_label2}
+      </div>
+      <div style="color:#9ca3af;font-size:.78rem;line-height:2">
+        • 근거: {final_source}<br>
+        • 종목 성향: {style_name} ({", ".join(reasons[:2])})<br>
+        • {rec_detail2}
+      </div>
+    </div>""", unsafe_allow_html=True)
 
     t_color = "#ff8c00" if ticker_type_a == "고변동성" else "#00d4ff"
     t_icon  = "🔥" if ticker_type_a == "고변동성" else "🧊"
