@@ -134,7 +134,31 @@ SECTOR_MAP = {
     "TLT":"TLT","IEF":"IEF","BIL":"BIL",
     # 산업재/전력/AI인프라
     "GEV":"XLI","VRT":"XLI","ETN":"XLI","EMR":"XLI",
-    "NEE":"XLU","DUK":"XLU","SO":"XLU",
+    "HON":"XLI","UPS":"XLI","CAT":"XLI","DE":"XLI",
+    "LMT":"XLI","RTX":"XLI","NOC":"XLI","GD":"XLI",
+    "BA":"XLI","GE":"XLI","PH":"XLI","ROK":"XLI",
+    "IR":"XLI","CMI":"XLI","OTIS":"XLI","CARR":"XLI",
+    "NEE":"XLU","DUK":"XLU","SO":"XLU","AEP":"XLU",
+    "EXC":"XLU","SRE":"XLU","XEL":"XLU","WEC":"XLU",
+    # 소재
+    "LIN":"XLB","APD":"XLB","ECL":"XLB","SHW":"XLB",
+    "FCX":"XLB","NEM":"XLB","NUE":"XLB","VMC":"XLB",
+    # 부동산
+    "AMT":"XLRE","PLD":"XLRE","EQIX":"XLRE","CCI":"XLRE",
+    "PSA":"XLRE","WELL":"XLRE","EQR":"XLRE","SPG":"XLRE",
+    # 통신
+    "T":"XLC","VZ":"XLC","TMUS":"XLC","CHTR":"XLC","CMCSA":"XLC",
+    # 핀테크/성장
+    "COIN":"XLK","HOOD":"XLK","SOFI":"XLF","AFRM":"XLF",
+    "UPST":"XLF","LC":"XLF",
+    # 클라우드
+    "TWLO":"XLK","ZI":"XLK","HUBS":"XLK","BILL":"XLK",
+    "PCTY":"XLK","PAYC":"XLK","VEEV":"XLV","ANSS":"XLK",
+    # 여행/레저
+    "UBER":"XLY","LYFT":"XLY","DASH":"XLY","EXPE":"XLY",
+    "NCLH":"XLY","CCL":"XLY","RCL":"XLY",
+    # 테마 ETF
+    "SOXX":"SOXX","ARKK":"XLK","WCLD":"XLK","CLOU":"XLK",
     # 기타 성장주
     "UBER":"XLY","ABNB":"XLY","SHOP":"XLY",
     "COIN":"XLK","MARA":"XLK","HOOD":"XLK",
@@ -305,30 +329,68 @@ def classify_ticker_type(ticker, df=None):
 # ════════════════════════════════════════════════════════
 # 자동 스캔 종목 풀 (섹터별 분류)
 # ════════════════════════════════════════════════════════
+# ══════════════════════════════════════════════════════════════
+# 스캔 종목 풀 — 나스닥100 + S&P500 주요 + 섹터별
+# ══════════════════════════════════════════════════════════════
 SCAN_UNIVERSE = {
-    "테크/반도체": ["AAPL","MSFT","NVDA","AMD","AVGO","QCOM","INTC","MU",
-                   "AMAT","KLAC","SNPS","CDNS","ADI","MRVL","ARM","SMCI"],
-    "소프트웨어":  ["GOOGL","META","CRM","ADBE","NOW","ORCL","INTU","WDAY",
-                   "PANW","CRWD","FTNT","ZS","DDOG","SNOW","PLTR"],
-    "소비자/미디어":["AMZN","TSLA","NFLX","DIS","SBUX","NKE","MCD","TGT",
-                    "COST","HD","LOW","BKNG","MAR","HLT"],
-    "금융":        ["JPM","GS","BAC","MS","BLK","V","MA","AXP",
-                   "C","WFC","SCHW","ICE","CME","BRK-B"],
-    "헬스케어":    ["UNH","LLY","JNJ","PFE","ABBV","MRK","BMY","AMGN",
-                   "GILD","ISRG","ELV","CVS","CI"],
-    "에너지":      ["XOM","CVX","COP","EOG","SLB","MPC","PSX","VLO",
-                   "OXY","PXD","FANG","HES"],
-    "ETF":         ["SPY","QQQ","IWM","DIA","XLK","XLF","XLE","XLV",
-                   "XLI","GLD","TLT","HYG"],
-    "기타 성장주": ["VRT","PLTR","ARM","APP","UBER","ABNB","COIN","RBLX",
-                   "SHOP","SQ","PYPL","AFRM"],
-    # ── 하락장 대응 섹터 ──────────────────────────────
-    "인버스 ETF":  ["SQQQ","SPXS","SOXS","SDOW","SH","PSQ",
-                   "SARK","LABD","SRTY","VIXY"],
-    "안전자산":    ["GLD","IAU","SLV","GDX","GDXJ",
-                   "TLT","IEF","SHY","BIL","SGOV"],
-    "방어주":      ["KO","PG","JNJ","WMT","MCD","CL","GIS",
-                   "K","CPB","HSY","XLU","XLP","XLV","VPU"],
+    # ── 나스닥100 핵심 ──────────────────────────────────────
+    "나스닥 테크":     ["AAPL","MSFT","NVDA","GOOGL","META","AMZN","TSLA",
+                       "AVGO","QCOM","AMD","INTC","MU","AMAT","KLAC","LRCX",
+                       "MRVL","ADI","MCHP","SNPS","CDNS","FTNT","PANW"],
+    "나스닥 소프트웨어":["CRM","ADBE","NOW","INTU","ORCL","WDAY","TEAM",
+                       "DDOG","SNOW","PLTR","CRWD","ZS","OKTA","MDB","DXCM"],
+    "나스닥 소비자":   ["NFLX","COST","BKNG","ABNB","EBAY","PYPL","MELI",
+                       "PCAR","ORLY","CPRT","CTAS","FAST","ODFL"],
+    "나스닥 바이오":   ["AMGN","GILD","REGN","VRTX","IDXX","ILMN","BIIB",
+                       "MRNA","SGEN","ALNY"],
+
+    # ── S&P500 섹터별 ────────────────────────────────────────
+    "S&P 금융":        ["JPM","GS","MS","BAC","WFC","C","BLK","SCHW",
+                       "AXP","V","MA","COF","USB","PNC","TFC","CME","ICE",
+                       "CB","MMC","AON","MET","PRU","AIG"],
+    "S&P 헬스케어":    ["UNH","LLY","JNJ","PFE","ABBV","MRK","TMO","ABT",
+                       "DHR","MDT","BMY","ISRG","ELV","CVS","CI","HUM",
+                       "A","ZBH","EW","STE","RMD"],
+    "S&P 에너지":      ["XOM","CVX","COP","EOG","SLB","MPC","PSX","VLO",
+                       "PXD","OXY","HES","DVN","FANG","HAL","BKR","APA"],
+    "S&P 산업재":      ["GEV","VRT","HON","UPS","CAT","DE","LMT","RTX",
+                       "NOC","GD","BA","GE","ETN","EMR","PH","ROK",
+                       "IR","XYL","OTIS","CARR","TT","CMI","PCAR"],
+    "S&P 소비재":      ["HD","LOW","MCD","SBUX","NKE","TGT","TJX","ROST",
+                       "YUM","DRI","CMG","HLT","MAR","WYNN","MGM"],
+    "S&P 유틸리티":    ["NEE","DUK","SO","D","AEP","EXC","SRE","PCG",
+                       "XEL","WEC","ES","ETR","PPL","EIX","FE"],
+    "S&P 부동산":      ["AMT","PLD","EQIX","CCI","PSA","WELL","EQR",
+                       "AVB","VTR","SPG","O","VICI","WY","ARE"],
+    "S&P 소재":        ["LIN","APD","ECL","SHW","FCX","NEM","NUE",
+                       "VMC","MLM","MOS","CF","IFF","PPG","EMN"],
+    "S&P 통신":        ["T","VZ","TMUS","CHTR","CMCSA","DIS","WBD",
+                       "OMC","IPG","NWSA","FOX"],
+
+    # ── 성장/테마주 ──────────────────────────────────────────
+    "AI/데이터센터":   ["SMCI","DELL","HPE","NTAP","PURE","WDC","STX",
+                       "CSCO","ANET","JNPR","KEYS","CIEN"],
+    "핀테크/결제":     ["SQ","COIN","HOOD","SOFI","AFRM","UPST","LC",
+                       "OPEN","NRDS","SMAR"],
+    "클라우드/SaaS":   ["TWLO","ZI","HUBS","BILL","PCTY","PAYC","VEEV",
+                       "ANSS","PTC","AZPN","CGNX"],
+    "소비자 플랫폼":   ["UBER","LYFT","DASH","ABNB","EXPE","TRIP","MTN",
+                       "H","NCLH","CCL","RCL"],
+
+    # ── ETF ─────────────────────────────────────────────────
+    "시장 ETF":        ["SPY","QQQ","IWM","DIA","MDY","IJR","VTI","VOO"],
+    "섹터 ETF":        ["XLK","XLF","XLE","XLV","XLI","XLY","XLP",
+                       "XLU","XLB","XLRE","XLC","GLD","SLV","TLT"],
+    "테마 ETF":        ["SOXX","ARKK","WCLD","CLOU","FINX","LIT","ICLN",
+                       "BOTZ","ROBO","HACK","CIBR","IGV"],
+
+    # ── 하락장 대응 ──────────────────────────────────────────
+    "인버스 ETF":      ["SQQQ","SPXS","SOXS","SDOW","SH","PSQ",
+                       "SRTY","VIXY","UVXY"],
+    "안전자산":        ["GLD","IAU","SLV","GDX","GDXJ",
+                       "TLT","IEF","SHY","BIL","SGOV"],
+    "방어주":          ["KO","PG","JNJ","WMT","MCD","CL","GIS",
+                       "KMB","HSY","CPB","K","HRL","SJM","CAG"],
 }
 # 전체 풀 (중복 제거)
 ALL_TICKERS = list(dict.fromkeys(
@@ -676,15 +738,24 @@ def scan_single(ticker):
         regime = row["Regime"]
         if regime == "UNKNOWN": return None
 
+        # ── 52주 낙폭 필터 ────────────────────────────────
+        draw52_scan = float(row.get("Draw52w", -20)) if "Draw52w" in row.index else -20
+        # 낙폭 -50% 초과 = 추세 완전 훼손 → 제외 (인버스 ETF 제외)
+        is_inverse = ticker.upper() in [
+            "SQQQ","SPXS","SOXS","SDOW","SH","PSQ","VIXY","SRTY"
+        ]
+        if not is_inverse and draw52_scan < -50:
+            return None
+
         # ── 섹터 필터 ─────────────────────────────────────
         sector_etf = SECTOR_MAP.get(ticker.upper())
         sector_st  = get_sector_regime(sector_etf) if sector_etf else "OK"
-        # 섹터 하락 중이면 스캔 제외 (인버스 ETF는 제외 안 함)
-        if sector_st == "WEAK" and ticker.upper() not in [
-            "SQQQ","SPXS","SOXS","SDOW","SH","PSQ","VIXY","SRTY",
-            "GLD","IAU","SLV","GDX","TLT","IEF","BIL","SGOV"
-        ]:
-            return None  # 섹터 하락 → 스캔 제외
+        is_safe_asset = ticker.upper() in [
+            "GLD","IAU","SLV","GDX","TLT","IEF","BIL","SGOV","GDXJ"
+        ]
+        # 섹터 하락 중이면 스캔 제외 (인버스 ETF + 안전자산 제외)
+        if sector_st == "WEAK" and not is_inverse and not is_safe_asset:
+            return None
 
         # DOWNtrend는 제외 안 하고 신호에서 표시
         # (피보나치/모멘텀 모두 불가하면 나중에 return None)
@@ -2045,6 +2116,7 @@ with st.sidebar:
         else:
             custom_list = None
             st.markdown("**섹터 선택** (비워두면 전체)")
+            st.caption(f"전체 {len(ALL_TICKERS)}개 종목")
             selected_sectors = st.multiselect("",
                 list(SCAN_UNIVERSE.keys()),
                 default=[],
@@ -2207,7 +2279,7 @@ if menu=="🏠 홈 대시보드":
                 "현재가":   st.column_config.TextColumn("현재가",  width="small"),
                 "1주":      st.column_config.TextColumn("1주",     width="small"),
                 "1개월":    st.column_config.TextColumn("1개월",   width="small"),
-                "점수":     st.column_config.TextColumn("AI 점수", width="small"),
+                "점수":     st.column_config.TextColumn("종합 점수", width="small"),
                 "레짐":     st.column_config.TextColumn("장세",    width="small"),
                 "신호":     st.column_config.TextColumn("신호",    width="medium"),
                 "행동":     st.column_config.TextColumn("행동",    width="small"),
@@ -2367,23 +2439,46 @@ elif menu=="🔍 종목 분석" and analyze_btn:
     st.markdown("#### 📊 3전략 백테스트 비교")
     st.caption("⭐ 최종추천: 백테스트 성과 기반 | 📌 성향추천: Style Detector 기반")
 
-    # ── 최종 전략 결정: 백테스트 성과 우선 ──────────────
+    # ── 최종 전략 결정: 성향 적합도 + 백테스트 종합 ──────
     bt_candidates = [
         ("V5 — 조건 완화 + 현실 익절", bt_v5),
         ("V6 — 고변동성 모멘텀",       bt_v6),
         ("V7 — 과매도 역추세 (권장)",   bt_v7),
     ]
+    # 적합도 점수 매핑
+    fit_score_map = {
+        "V5 — 조건 완화 + 현실 익절": fib_fit_a,
+        "V6 — 고변동성 모멘텀":       mom_fit_a,
+        "V7 — 과매도 역추세 (권장)":   v7_fit_a,
+    }
     valid_bts = [(n,b) for n,b in bt_candidates if b and b["trades"]>=3]
 
     if valid_bts:
-        def bt_score_fn(b):
-            return b["cagr"]*0.5 + b["wr"]*0.3 + (b["mdd"]/(-50))*20
-        final_strat_name, final_bt = max(valid_bts, key=lambda x: bt_score_fn(x[1]))
-        final_source = "백테스트 성과 기반"
+        def bt_score_fn(name, b):
+            fit = fit_score_map.get(name, 0)
+            # 백테스트 성과 70% + 적합도 30%
+            perf = b["cagr"]*0.5 + b["wr"]*0.3 + (b["mdd"]/(-50))*20
+            return perf * 0.7 + fit * 0.3
+        final_strat_name, final_bt = max(
+            valid_bts, key=lambda x: bt_score_fn(x[0], x[1])
+        )
+        # 단, 적합도 점수가 20점 이상 차이나면 적합도 우선
+        style_winner = max(fit_score_map, key=fit_score_map.get)
+        bt_winner    = final_strat_name
+        style_score  = fit_score_map[style_winner]
+        bt_fit_score = fit_score_map.get(bt_winner, 0)
+        if style_score - bt_fit_score >= 20:
+            # 성향이 압도적으로 맞는 전략 우선
+            final_strat_name = style_winner
+            final_bt = dict(bt_candidates).get(style_winner)
+            final_source = f"성향 적합도 우선 ({style_winner[:3]}: {style_score}점 vs {bt_winner[:3]}: {bt_fit_score}점)"
+        else:
+            final_source = "백테스트 성과 + 성향 종합"
     else:
-        final_strat_name = best_strat
-        final_bt = bt_v5 or bt_v6 or bt_v7
-        final_source = "종목 성향 기반 (백테스트 데이터 부족)"
+        # 백테스트 데이터 없으면 성향 점수 최고 전략
+        final_strat_name = max(fit_score_map, key=fit_score_map.get)
+        final_bt = dict(bt_candidates).get(final_strat_name)
+        final_source = f"성향 적합도 기반 ({final_strat_name[:3]}: {fit_score_map[final_strat_name]}점)"
 
     # 비교표 재출력 — 최종 추천 반영
     compare_rows_final = []
@@ -2989,7 +3084,7 @@ elif menu=="🔍 종목 분석" and analyze_btn:
 
     c1,c2,c3,c4,c5,c6=st.columns(6)
     mcard(c1,"현재가",f"${res['price']:.2f}","#00d4ff")
-    mcard(c2,"AI 점수",f"{res['pct']:.0f}%",sc,f"{res['ts']+res['cs']+res['ss']+res['irs']:.0f}/16")
+    mcard(c2,"종합 점수",f"{res['pct']:.0f}%",sc,f"{res['ts']+res['cs']+res['ss']+res['irs']:.0f}/16")
     mcard(c3,"장세",res["cfg"]["desc"],"#e8eaf6")
     mcard(c4,"종목 유형",
           "🔥 고변동성" if ticker_type_a=="고변동성" else "🧊 저변동성",
@@ -3718,7 +3813,7 @@ elif menu=="🔍 종목 분석" and analyze_btn:
 - 현재가: ${res['price']:.2f}
 - 레짐: {res['regime']} ({res['cfg']['desc']})
 - 피보나치 BUY1: {fib1}
-- AI 점수: {res['pct']:.0f}%
+- 종합 점수: {res['pct']:.0f}%
 
 다음을 한국어로 간결하게 분석해주세요:
 
@@ -3864,166 +3959,7 @@ elif menu=="🔍 종목 분석" and analyze_btn:
         st.info("재무 데이터를 가져올 수 없습니다.")
     st.markdown("---")
 
-    # ════════════════════════════════════════════════════════════
-    # 🎯 XGBoost — BUY1/2/3 도달 확률 예측
-    # ════════════════════════════════════════════════════════════
-    st.markdown("#### 🎯 BUY 도달 확률 예측 (XGBoost AI)")
-    st.caption("현재 시장 상태를 기반으로 향후 5일 안에 각 매수 구간에 도달할 확률을 예측합니다.")
 
-    def build_reach_dataset(df, target_price, horizon=5):
-        """
-        특정 가격(target_price)에 향후 horizon일 내 도달 여부 라벨 생성
-        look-ahead bias 방지: 마지막 horizon행은 학습 제외
-        """
-        df = df.copy()
-        # 미래 horizon일 고가 최대값 → target 터치 여부
-        df["future_max"] = df["High"].shift(-1).rolling(horizon).max()
-        df["reach"]      = (df["future_max"] >= target_price).astype(int)
-        # BUY 레벨까지 거리 (%)
-        df["dist_pct"]   = (df["Close"] - target_price) / target_price * 100
-        # MA 거리
-        df["dist_ma20"]  = (df["Close"] - df["MA20"])  / df["MA20"]  * 100
-        df["dist_ma60"]  = (df["Close"] - df["MA60"])  / df["MA60"]  * 100
-        df["dist_ma200"] = (df["Close"] - df["MA200"]) / df["MA200"] * 100
-        # 변동성 비율
-        df["vol_ratio"]  = df["Vol5"] / (df["Vol20"] + 1e-9)
-        features = [
-            "dist_pct","dist_ma20","dist_ma60","dist_ma200",
-            "ATR","ADX","ROC","StochRSI","vol_ratio",
-            "TrendScore","CycleScore","SeasonalScore","IrregularScore",
-        ]
-        df_clean = df.dropna(subset=features + ["reach"])
-        # 마지막 horizon행은 라벨 신뢰 불가 → 제외
-        df_clean = df_clean.iloc[:-horizon] if len(df_clean) > horizon else df_clean
-        if len(df_clean) < 30:
-            return None, None, features
-        return df_clean[features], df_clean["reach"], features
-
-    def train_reach_model(df, target_price):
-        try:
-            import xgboost as xgb
-        except ImportError:
-            return None, "xgboost 미설치"
-        X, y, features = build_reach_dataset(df, target_price)
-        if X is None or y is None:
-            return None, "데이터 부족"
-        if y.sum() < 5:
-            return None, "도달 샘플 부족 (항상 관망 구간)"
-        # 80% 학습 / 20% 검증 (look-ahead 방지)
-        split  = int(len(X) * 0.8)
-        X_tr, y_tr = X.iloc[:split], y.iloc[:split]
-        # 클래스 불균형 보정
-        pos   = int(y_tr.sum())
-        neg   = len(y_tr) - pos
-        ratio = max(1, neg // pos) if pos > 0 else 1
-        model = xgb.XGBClassifier(
-            max_depth=4, learning_rate=0.07, n_estimators=180,
-            subsample=0.85, colsample_bytree=0.85,
-            scale_pos_weight=ratio,          # ✅ 불균형 보정
-            eval_metric="logloss", verbosity=0,
-            use_label_encoder=False,
-        )
-        model.fit(X_tr, y_tr)
-        return model, features
-
-    def predict_reach_prob(model, df, target_price, features):
-        df2 = df.copy()
-        df2["dist_pct"]   = (df2["Close"] - target_price) / target_price * 100
-        df2["dist_ma20"]  = (df2["Close"] - df2["MA20"])  / df2["MA20"]  * 100
-        df2["dist_ma60"]  = (df2["Close"] - df2["MA60"])  / df2["MA60"]  * 100
-        df2["dist_ma200"] = (df2["Close"] - df2["MA200"]) / df2["MA200"] * 100
-        df2["vol_ratio"]  = df2["Vol5"] / (df2["Vol20"] + 1e-9)
-        row = df2[features].dropna().iloc[[-1]]
-        if row.empty:
-            return None
-        return float(model.predict_proba(row)[0][1]) * 100
-
-    # BUY1 / BUY2 / BUY3 순서로 예측
-    buy_targets = [
-        ("BUY1", res["fib_lv"][0], res["cfg"]["fib"][0], "#00ff9d"),
-        ("BUY2", res["fib_lv"][1], res["cfg"]["fib"][1], "#ffd700"),
-        ("BUY3", res["fib_lv"][2], res["cfg"]["fib"][2], "#ff8c00"),
-    ]
-
-    prob_rows = []
-    with st.spinner("XGBoost 모델 학습 중 (약 3~5초)..."):
-        for label, target_price, fib_lvl, color in buy_targets:
-            if target_price is None:
-                prob_rows.append({
-                    "구분": label, "목표가": "N/A", "도달 확률 (5일)": "-",
-                    "예측": "-", "현재가 대비": "-",
-                })
-                continue
-            result_model = train_reach_model(res["df"], target_price)
-            if result_model[0] is None:
-                prob_rows.append({
-                    "구분": label,
-                    "목표가": f"${target_price:.2f}",
-                    "도달 확률 (5일)": f"({result_model[1]})",
-                    "예측": "예측 불가",
-                    "현재가 대비": f"{(target_price/res['price']-1)*100:+.1f}%",
-                })
-                continue
-            model, features = result_model
-            prob = predict_reach_prob(model, res["df"], target_price, features)
-            if prob is None:
-                prediction = "계산 오류"
-                prob_str   = "-"
-            else:
-                prob_str   = f"{prob:.1f}%"
-                prediction = "🟢 높음" if prob >= 60 else \
-                             "🟡 보통" if prob >= 35 else "🔴 낮음"
-            prob_rows.append({
-                "구분":           label,
-                "목표가":         f"${target_price:.2f}",
-                "현재가 대비":    f"{(target_price/res['price']-1)*100:+.1f}%",
-                "도달 확률 (5일)": prob_str,
-                "예측":           prediction,
-                "Fib 레벨":       str(fib_lvl),
-            })
-
-    # 결과 표
-    df_prob = pd.DataFrame(prob_rows)
-    st.dataframe(df_prob, use_container_width=True, hide_index=True,
-        column_config={
-            "구분":           st.column_config.TextColumn("구분",           width="small"),
-            "목표가":         st.column_config.TextColumn("목표가",         width="small"),
-            "현재가 대비":    st.column_config.TextColumn("현재가 대비",    width="small"),
-            "도달 확률 (5일)": st.column_config.TextColumn("도달 확률 (5일)", width="medium"),
-            "예측":           st.column_config.TextColumn("예측",           width="small"),
-            "Fib 레벨":       st.column_config.TextColumn("Fib 레벨",       width="small"),
-        })
-
-    # 시각적 확률 바
-    for row in prob_rows:
-        if row["도달 확률 (5일)"] in ["-","(데이터 부족)","(도달 샘플 부족 (항상 관망 구간))","예측 불가","계산 오류"]:
-            continue
-        try:
-            pct_val = float(row["도달 확률 (5일)"].replace("%",""))
-            bar_color = "#00ff9d" if pct_val>=60 else "#ffd700" if pct_val>=35 else "#ff4757"
-            st.markdown(f"""
-            <div style="margin-bottom:8px">
-              <div style="display:flex;justify-content:space-between;
-                          font-size:.8rem;color:#9ca3af;margin-bottom:3px">
-                <span>{row['구분']} — {row['목표가']}</span>
-                <span style="color:{bar_color};font-weight:700">{row['도달 확률 (5일)']}</span>
-              </div>
-              <div style="background:#1e2d4a;border-radius:4px;height:8px">
-                <div style="width:{min(pct_val,100):.1f}%;height:8px;border-radius:4px;
-                            background:{bar_color};transition:width 1s"></div>
-              </div>
-            </div>""", unsafe_allow_html=True)
-        except Exception:
-            continue
-
-    st.markdown("""
-    <div style="background:#111827;border:1px solid #1e2d4a;border-radius:8px;
-                padding:12px 16px;margin-top:10px;font-size:.76rem;color:#6b7280;line-height:1.8">
-      <b style="color:#e8eaf6">📌 모델 설명</b><br>
-      • 과거 데이터로 XGBoost 학습 → 현재 시장 상태 입력 → 5일 내 도달 확률 출력<br>
-      • 🟢 60% 이상: 적극 고려 &nbsp;|&nbsp; 🟡 35~60%: 관망 &nbsp;|&nbsp; 🔴 35% 미만: 진입 비추천<br>
-      • 과거 성과가 미래를 보장하지 않습니다. 참고용으로만 활용하세요.
-    </div>""", unsafe_allow_html=True)
 
 # ════════════════════════════════════════════════════════════
 # 🤖 AI 자동 스캔
@@ -4133,7 +4069,7 @@ elif menu=="🤖 AI 종목 추천" and scan_btn:
                             "신호":      r["signal"],
                             "BUY1":      f"${b1:.2f}" if b1 else "대기",
                             "BUY1까지":  f"{r.get('dist_pct',0):+.1f}%",
-                            "AI 점수":   f"{r.get('pct',0):.0f}%",
+                            "종합 점수":   f"{r.get('pct',0):.0f}%",
                             "추천 점수": f"{r.get('total_rec_score',0):.0f}점",
                             "1주":       f"{r.get('ret_1w',0):+.1f}%",
                             "1개월":     f"{r.get('ret_1m',0):+.1f}%",
@@ -4147,7 +4083,7 @@ elif menu=="🤖 AI 종목 추천" and scan_btn:
                             "신호":      st.column_config.TextColumn(width="medium"),
                             "BUY1":      st.column_config.TextColumn(width="small"),
                             "BUY1까지":  st.column_config.TextColumn(width="small"),
-                            "AI 점수":   st.column_config.TextColumn(width="small"),
+                            "종합 점수":   st.column_config.TextColumn(width="small"),
                             "추천 점수": st.column_config.TextColumn(width="small"),
                         })
 
@@ -4344,7 +4280,7 @@ elif menu=="🤖 AI 종목 추천" and scan_btn:
             "V7점수":    f"{v7_s}/4" if strat=="V7역추세" else "-",
             "모멘점수":  f"{r.get('momentum_score',0)}/4" if strat=="모멘텀V6" else "-",
             "BUY1까지":  f"{r.get('dist_pct',0):+.1f}%" if r.get("nearest_fib") else "-",
-            "AI 점수":   f"{r.get('pct',0):.0f}%",
+            "종합 점수":   f"{r.get('pct',0):.0f}%",
             "추천 점수": f"{r.get('total_rec_score',0):.0f}점",
             "1주":       f"{r.get('ret_1w',0):+.1f}%",
             "1개월":     f"{r.get('ret_1m',0):+.1f}%",
@@ -4354,7 +4290,7 @@ elif menu=="🤖 AI 종목 추천" and scan_btn:
             "BUY1 가격": b1_str,
             "BUY1까지":  dist_str,
             "추가매수":  bull_str,
-            "AI 점수":   f"{r['pct']:.0f}%",
+            "종합 점수":   f"{r['pct']:.0f}%",
             "추천 점수": f"{r['total_rec_score']:.0f}점",
             "1주":       f"{r['ret_1w']:+.1f}%",
             "1개월":     f"{r['ret_1m']:+.1f}%",
@@ -4372,7 +4308,7 @@ elif menu=="🤖 AI 종목 추천" and scan_btn:
             "V7점수":    st.column_config.TextColumn("V7점수",    width="small"),
             "모멘점수":  st.column_config.TextColumn("모멘점수",  width="small"),
             "BUY1까지":  st.column_config.TextColumn("BUY1까지",  width="small"),
-            "AI 점수":   st.column_config.TextColumn("AI 점수",   width="small"),
+            "종합 점수":   st.column_config.TextColumn("종합 점수",   width="small"),
             "추천 점수": st.column_config.TextColumn("추천 점수", width="small"),
             "현재가":    st.column_config.TextColumn(width="small"),
             "1주":       st.column_config.TextColumn(width="small"),
@@ -4399,7 +4335,7 @@ elif menu=="🤖 AI 종목 추천" and scan_btn:
             ec1,ec2,ec3,ec4 = st.columns(4)
             mcard(ec1,"현재가",    f"${r['price']:.2f}",  "#00d4ff")
             mcard(ec2,"장세",      r["regime_desc"],        "#e8eaf6")
-            mcard(ec3,"AI 점수",   f"{r['pct']:.0f}%",     sc)
+            mcard(ec3,"종합 점수",   f"{r['pct']:.0f}%",     sc)
             mcard(ec4,"추가매수",  bull_icon,               bull_col,
                   f"조건 {r['bull_score']}/3")
 
@@ -4458,7 +4394,7 @@ elif menu=="🤖 AI 종목 추천" and scan_btn:
                 "신호":      r.get("signal",""),
                 "BUY1":      f"${b1:.2f}" if b1 else "대기",
                 "BUY1까지":  f"{r.get('dist_pct',0):+.1f}%",
-                "AI 점수":   f"{r.get('pct',0):.0f}%",
+                "종합 점수":   f"{r.get('pct',0):.0f}%",
                 "추천 점수": f"{r.get('total_rec_score',0):.0f}점",
                 "1주":       f"{r.get('ret_1w',0):+.1f}%",
             })
@@ -4878,7 +4814,7 @@ StochRSI:   {res["cfg"]["stoch"]} 이하
 --- 백테스트 설정 ---
 전략 버전:      {bt_version}
 진입 방식:      {"과매도 2/4이상 + 피보BUY1" if ver_cfg.get("strategy_type")=="v7" else "2/3 완화" if ver_cfg["buy_logic"]=="2of3" else "모멘텀 추격" if ver_cfg["buy_logic"]=="momentum" else "3/3 엄격"}
-AI 점수 기준:   {"비사용" if ver_cfg.get("strategy_type")=="v7" else f"{bt_score_thr}%"}
+AI 점수 기준:   {"미사용 (V7)" if ver_cfg.get("strategy_type")=="v7" else "미사용 (V6)" if ver_cfg.get("strategy_type")=="momentum" else f"{bt_score_thr}%"}
 레짐 필터:      {"ON" if ver_cfg["use_regime"] else "OFF"}
 StochRSI 필터: {"비사용 (V7 자체 조건 사용)" if ver_cfg.get("strategy_type")=="v7" else "ON" if ver_cfg["use_stoch"] else "OFF"}
 물타기/불타기:  {"금지 (불타기만)" if ver_cfg.get("strategy_type")=="v7" else "ON" if ver_cfg["use_bull_bear"] else "OFF"}
