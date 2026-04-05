@@ -2320,6 +2320,15 @@ if menu=="🏠 홈 대시보드":
 # 🔍 종목 분석
 # ════════════════════════════════════════════════════════════
 elif menu=="🔍 종목 분석" and analyze_btn:
+    # ── final_strat_name 기본값 (fib_fit_a 계산 전 참조 방지) ──
+    final_strat_name = "V5 — 조건 완화 + 현실 익절"
+    final_bt         = None
+    final_source     = "초기화"
+    icon_map = {
+        "V5 — 조건 완화 + 현실 익절": "📐 V5 피보나치",
+        "V6 — 고변동성 모멘텀":       "🚀 V6 모멘텀",
+        "V7 — 과매도 역추세 (권장)":   "🎯 V7 역추세",
+    }
     # ✅ 항상 2y 데이터로 받아서 멀티 기간 분석
     with st.spinner(f"📡 {ticker_input} 데이터 수집 중..."):
         analyze.clear()
