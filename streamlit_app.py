@@ -1509,22 +1509,53 @@ elif menu=="🔍 종목 분석" and analyze_btn:
     df_full = res["df"]
 
     def get_period_regime(df, window):
-        """최근 N봉 기준으로 레짐 계산"""
-        if len(df) < window + 50:
+        """
+        최근 N봉만 잘라서 그 구간의 레짐 + 수익률 + 변동성 계산
+        레짐도 해당 구간 데이터로 새로 계산 (전체 데이터 레짐 아님)
+        """
+        if len(df) < window + 10:
             return "UNKNOWN", 0, 0
-        sub = df.tail(window + 50).copy().reset_index(drop=True)
-        # 해당 구간의 마지막 봉 레짐
-        valid = sub.dropna(subset=["Regime","MA200","ADX","ROC"])
-        if valid.empty:
+        # 해당 기간 데이터만 추출
+        sub = df.tail(window).copy().reset_index(drop=True)
+        if sub.empty or len(sub) < 5:
             return "UNKNOWN", 0, 0
-        row  = valid.iloc[-1]
-        ret  = float((sub["Close"].iloc[-1] / sub["Close"].iloc[0] - 1) * 100)
-        vol  = float(sub["Return"].std() * (252**0.5) * 100) if "Return" in sub else 0
-        return row["Regime"], round(ret, 1), round(vol, 1)
 
-    r_short, ret_short, vol_short = get_period_regime(df_full, 20)   # 1개월
-    r_mid,   ret_mid,   vol_mid   = get_period_regime(df_full, 60)   # 3개월
-    r_long,  ret_long,  vol_long  = get_period_regime(df_full, 200)  # 1년
+        # 수익률: 해당 기간 시작→끝
+        ret = float((sub["Close"].iloc[-1] / sub["Close"].iloc[0] - 1) * 100)
+        # 변동성: 해당 기간 연환산
+        vol = float(sub["Return"].std() * (252**0.5) * 100) if "Return" in sub.columns else 0
+
+        # 레짐: 해당 기간의 MA 기울기로 판단 (기간별 독립 계산)
+        close  = sub["Close"]
+        ma20   = close.rolling(min(20, len(sub))).mean()
+        ma_mid = close.rolling(min(window//2, len(sub))).mean()
+
+        # 기간별 레짐 판단 기준
+        # 단기(20일): 20일 수익률 + MA20 기울기
+        # 중기(60일): 60일 수익률 + MA 기울기
+        # 장기(200일): 장기 MA + ADX 사용
+        ma_slope = float(ma20.iloc[-1] - ma20.iloc[max(-10,-len(ma20))]) if len(ma20) >= 5 else 0
+        roc_val  = ret  # 해당 기간 수익률을 ROC로 사용
+
+        # ADX (있으면 사용)
+        adx_val = float(sub["ADX"].iloc[-1]) if "ADX" in sub.columns and not sub["ADX"].isna().all() else 15
+
+        if roc_val > 3 and ma_slope > 0 and adx_val > 15:
+            regime = "UPtrend"
+        elif roc_val < -3 and ma_slope < 0 and adx_val > 15:
+            regime = "DOWNtrend"
+        elif abs(roc_val) <= 8:
+            regime = "RANGE"
+        elif roc_val > 0:
+            regime = "UPtrend"
+        else:
+            regime = "DOWNtrend"
+
+        return regime, round(ret, 1), round(vol, 1)
+
+    r_short, ret_short, vol_short = get_period_regime(df_full, 20)   # 단기 1개월
+    r_mid,   ret_mid,   vol_mid   = get_period_regime(df_full, 60)   # 중기 3개월
+    r_long,  ret_long,  vol_long  = get_period_regime(df_full, 200)  # 장기 1년
 
     # 레짐 색상/아이콘
     def regime_style(r):
