@@ -3671,17 +3671,32 @@ elif menu=="📊 백테스트" and bt_btn:
             st.info("🔥 **모멘텀 전략**: 피보나치 대신 MA20>MA60 + RSI + MACD + 거래량으로 진입 → 익절 +10% / 손절 -5%")
         else:
             st.info("🧊 **피보나치 전략**: BUY1→BUY2→BUY3 분할매수 → 익절 UP+15%/RANGE+12% / 손절 UP-7%/RANGE-5%")
+        # V7은 키 구조가 다름 — .get()으로 안전하게 접근
+        b1_cnt  = m.get("BUY1 진입",   m.get("BUY1 진입", 0))
+        b2_cnt  = m.get("BUY2 추가",   m.get("BUY2 불타기", 0))
+        b3_cnt  = m.get("BUY3 추가",   m.get("BUY3 불타기", 0))
+        b2_bull = m.get("BUY2 불타기", 0)
+        b2_bear = m.get("BUY2 물타기", 0)
+        b3_bull = m.get("BUY3 불타기", 0)
+        b3_bear = m.get("BUY3 물타기", 0)
+        total   = m.get("총 완결 거래", 0)
+        익절    = m.get("익절", 0)
+        손절    = m.get("손절", 0)
+
+        is_v7 = (actual_strategy == "V7 과매도 역추세 전략")
         stage_data = {
-            "단계":      ["BUY1 (1차 진입)", "BUY2 (2차)", "BUY3 (3차)", "SELL (청산)"],
-            "비중":      ["30%", "35%", "35%", "전량"],
-            "전체":      [m["BUY1 진입"], m["BUY2 추가"], m["BUY3 추가"], m["총 완결 거래"]],
-            "물타기":    ["-", m["BUY2 물타기"], m["BUY3 물타기"], "-"],
-            "불타기":    ["-", m["BUY2 불타기"], m["BUY3 불타기"], "-"],
-            "의미":      [
-                "피보나치 BUY1 도달 → 1차 진입 (30%)",
-                f"물타기{m['BUY2 물타기']}건(Fib 하단) / 불타기{m['BUY2 불타기']}건(상승전환 후 추격)",
-                f"물타기{m['BUY3 물타기']}건(Fib 하단) / 불타기{m['BUY3 불타기']}건(상승전환 후 추격)",
-                f"익절 {m['익절']}건 / 손절 {m['손절']}건",
+            "단계":  ["BUY1 (1차 진입)", "BUY2 (2차)", "BUY3 (3차)", "SELL (청산)"],
+            "비중":  ["30%", "35%", "35%", "전량"],
+            "전체":  [b1_cnt, b2_cnt, b3_cnt, total],
+            "물타기": ["-", "-" if is_v7 else b2_bear,
+                      "-" if is_v7 else b3_bear, "-"],
+            "불타기": ["-", b2_bull, b3_bull, "-"],
+            "의미":  [
+                "피보나치 BUY1 + 과매도 2개 이상 + 양봉 확인" if is_v7
+                else "피보나치 BUY1 도달 → 1차 진입 (30%)",
+                f"불타기 {b2_bull}건 (모멘텀 회복 확인 후)",
+                f"불타기 {b3_bull}건 (모멘텀 회복 확인 후)",
+                f"익절 {익절}건 / 손절 {손절}건",
             ],
         }
         st.dataframe(pd.DataFrame(stage_data), use_container_width=True, hide_index=True,
@@ -3695,8 +3710,8 @@ elif menu=="📊 백테스트" and bt_btn:
             })
 
         # 불타기 비율 시각화
-        total_add = m["BUY2 추가"] + m["BUY3 추가"]
-        total_bull = m["BUY2 불타기"] + m["BUY3 불타기"]
+        total_add  = m.get("BUY2 추가", 0) + m.get("BUY3 추가", 0)
+        total_bull = m.get("BUY2 불타기", 0) + m.get("BUY3 불타기", 0)
         if total_add > 0:
             bull_ratio = total_bull / total_add * 100
             st.markdown(f"""
