@@ -1603,6 +1603,11 @@ elif menu=="🔍 종목 분석" and analyze_btn:
 
     ov_txt, ov_color, ov_desc = overall
 
+    # f-string 안 중첩 if 방지 — 변수로 미리 계산
+    ret_short_color = "#00ff9d" if ret_short > 0 else "#ff4757"
+    ret_mid_color   = "#00ff9d" if ret_mid   > 0 else "#ff4757"
+    ret_long_color  = "#00ff9d" if ret_long  > 0 else "#ff4757"
+
     st.markdown(f"""
     <div style="background:#0f172a;border:2px solid {ov_color};
                 border-radius:14px;padding:16px;margin-bottom:16px">
@@ -1617,8 +1622,8 @@ elif menu=="🔍 종목 분석" and analyze_btn:
                     border-radius:10px;padding:12px;text-align:center">
           <div style="color:#6b7280;font-size:.7rem;margin-bottom:4px">단기 (1개월)</div>
           <div style="color:{sc};font-weight:700;font-size:1rem">{sl}</div>
-          <div style="color:{'#00ff9d' if ret_short>0 else '#ff4757'};
-                      font-size:.8rem;margin-top:4px">{ret_short:+.1f}%</div>
+          <div style="color:{ret_short_color};font-size:.8rem;margin-top:4px">
+            {ret_short:+.1f}%</div>
           <div style="color:#6b7280;font-size:.68rem">변동성 {vol_short:.0f}%</div>
         </div>
 
@@ -1626,8 +1631,8 @@ elif menu=="🔍 종목 분석" and analyze_btn:
                     border-radius:10px;padding:12px;text-align:center">
           <div style="color:#6b7280;font-size:.7rem;margin-bottom:4px">중기 (3개월)</div>
           <div style="color:{mc};font-weight:700;font-size:1rem">{ml}</div>
-          <div style="color:{'#00ff9d' if ret_mid>0 else '#ff4757'};
-                      font-size:.8rem;margin-top:4px">{ret_mid:+.1f}%</div>
+          <div style="color:{ret_mid_color};font-size:.8rem;margin-top:4px">
+            {ret_mid:+.1f}%</div>
           <div style="color:#6b7280;font-size:.68rem">변동성 {vol_mid:.0f}%</div>
         </div>
 
@@ -1635,8 +1640,8 @@ elif menu=="🔍 종목 분석" and analyze_btn:
                     border-radius:10px;padding:12px;text-align:center">
           <div style="color:#6b7280;font-size:.7rem;margin-bottom:4px">장기 (1년)</div>
           <div style="color:{lc};font-weight:700;font-size:1rem">{ll}</div>
-          <div style="color:{'#00ff9d' if ret_long>0 else '#ff4757'};
-                      font-size:.8rem;margin-top:4px">{ret_long:+.1f}%</div>
+          <div style="color:{ret_long_color};font-size:.8rem;margin-top:4px">
+            {ret_long:+.1f}%</div>
           <div style="color:#6b7280;font-size:.68rem">변동성 {vol_long:.0f}%</div>
         </div>
 
