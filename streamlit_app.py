@@ -1603,58 +1603,35 @@ elif menu=="🔍 종목 분석" and analyze_btn:
 
     ov_txt, ov_color, ov_desc = overall
 
-    # f-string 안 중첩 if 방지 — 변수로 미리 계산
-    ret_short_color = "#00ff9d" if ret_short > 0 else "#ff4757"
-    ret_mid_color   = "#00ff9d" if ret_mid   > 0 else "#ff4757"
-    ret_long_color  = "#00ff9d" if ret_long  > 0 else "#ff4757"
+    # ── 종합 판단 배너 ──
+    st.markdown(f"### {ov_txt}")
+    st.caption(ov_desc)
 
-    st.markdown(f"""
-    <div style="background:#0f172a;border:2px solid {ov_color};
-                border-radius:14px;padding:16px;margin-bottom:16px">
-      <div style="color:{ov_color};font-weight:700;font-size:1.05rem;margin-bottom:4px">
-        {ov_txt}
-      </div>
-      <div style="color:#9ca3af;font-size:.8rem;margin-bottom:14px">{ov_desc}</div>
+    # ── 단기/중기/장기 레짐 카드 (st.columns 사용) ──
+    col_s, col_m, col_l = st.columns(3)
 
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px">
+    def regime_card(col, label, regime, ret, vol):
+        color = {"UPtrend":"#00ff9d","RANGE":"#ffd700",
+                 "DOWNtrend":"#ff4757"}.get(regime,"#6b7280")
+        icon  = {"UPtrend":"📈 상승","RANGE":"➡️ 박스",
+                 "DOWNtrend":"📉 하락"}.get(regime,"❓")
+        ret_color = "#00ff9d" if ret > 0 else "#ff4757"
+        col.markdown(f"""
+        <div style="background:#111827;border-radius:10px;
+                    padding:14px;text-align:center;border:1px solid {color}55">
+          <div style="color:#6b7280;font-size:.72rem;margin-bottom:4px">{label}</div>
+          <div style="color:{color};font-weight:700;font-size:1rem">{icon}</div>
+          <div style="color:{ret_color};font-size:.85rem;
+                      font-weight:700;margin-top:6px">{ret:+.1f}%</div>
+          <div style="color:#6b7280;font-size:.68rem;margin-top:2px">
+            변동성 {vol:.0f}%</div>
+        </div>""", unsafe_allow_html=True)
 
-        <div style="background:#111827;border:1px solid {sc}44;
-                    border-radius:10px;padding:12px;text-align:center">
-          <div style="color:#6b7280;font-size:.7rem;margin-bottom:4px">단기 (1개월)</div>
-          <div style="color:{sc};font-weight:700;font-size:1rem">{sl}</div>
-          <div style="color:{ret_short_color};font-size:.8rem;margin-top:4px">
-            {ret_short:+.1f}%</div>
-          <div style="color:#6b7280;font-size:.68rem">변동성 {vol_short:.0f}%</div>
-        </div>
+    regime_card(col_s, "단기 (1개월)", r_short, ret_short, vol_short)
+    regime_card(col_m, "중기 (3개월)", r_mid,   ret_mid,   vol_mid)
+    regime_card(col_l, "장기 (1년)",   r_long,  ret_long,  vol_long)
 
-        <div style="background:#111827;border:1px solid {mc}44;
-                    border-radius:10px;padding:12px;text-align:center">
-          <div style="color:#6b7280;font-size:.7rem;margin-bottom:4px">중기 (3개월)</div>
-          <div style="color:{mc};font-weight:700;font-size:1rem">{ml}</div>
-          <div style="color:{ret_mid_color};font-size:.8rem;margin-top:4px">
-            {ret_mid:+.1f}%</div>
-          <div style="color:#6b7280;font-size:.68rem">변동성 {vol_mid:.0f}%</div>
-        </div>
-
-        <div style="background:#111827;border:1px solid {lc}44;
-                    border-radius:10px;padding:12px;text-align:center">
-          <div style="color:#6b7280;font-size:.7rem;margin-bottom:4px">장기 (1년)</div>
-          <div style="color:{lc};font-weight:700;font-size:1rem">{ll}</div>
-          <div style="color:{ret_long_color};font-size:.8rem;margin-top:4px">
-            {ret_long:+.1f}%</div>
-          <div style="color:#6b7280;font-size:.68rem">변동성 {vol_long:.0f}%</div>
-        </div>
-
-      </div>
-
-      <div style="margin-top:12px;padding-top:10px;border-top:1px solid #1e2d4a;
-                  font-size:.76rem;color:#6b7280;line-height:1.8">
-        💡 <b style="color:#ffd700">전략 가이드:</b><br>
-        단기↑ + 중기↑ → 모멘텀V6 + 트레일링 &nbsp;|&nbsp;
-        단기↓ + 장기↑ → 피보나치 눌림목 매수 &nbsp;|&nbsp;
-        전부↓ → 인버스 ETF or 현금 보유
-      </div>
-    </div>""", unsafe_allow_html=True)
+    st.caption("💡 단기↑+중기↑ → 모멘텀V6 트레일링 | 단기↓+장기↑ → 피보나치 눌림목 매수 | 전부↓ → 인버스 ETF")
     st.markdown("---")
 
     # ── 종목 유형 자동 감지 + 권장 전략 배너 ──
