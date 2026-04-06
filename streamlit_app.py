@@ -1525,9 +1525,9 @@ def run_v7_backtest(df, slippage=0.002, trail_pct=0.15):
             if p > peak_after_buy:
                 peak_after_buy = p
 
-            # 손절: 평균단가 기준 or Fib 0.886
-            # V7 손절: 넓게 잡기 (역추세는 변동성 큼)
-            stop_price  = avg * (1 - max(cfg_e["stop"], 0.10))
+            # 손절: 피보 0.886 레벨 이탈 시 (마지막 지지선)
+            # BUY1 진입가 기준으로 0.886 역산
+            stop_price  = ep[0] * (1 - (ep[0] - fib886) / ep[0]) if fib886 and fib886 < ep[0] else avg * 0.95
             # 트레일링: 수익 1% 이상이면 발동 (조건 완화)
             trail_price = peak_after_buy * (1 - trail_pct)
             # 고정 익절 +12% or 트레일링 중 더 큰 것
@@ -3118,38 +3118,77 @@ elif menu=="🔍 종목 분석" and analyze_btn:
 
     elif "V7" in final_strat_name:
         # V7 역추세 플랜
-        b1 = res["fib_lv"][0]
-        b2 = res["fib_lv"][1]
-        b3 = res["fib_lv"][2]
+        b1      = res["fib_lv"][0]
+        fib886  = res.get("fib886")  # analyze에서 계산된 0.886 레벨
         st.markdown(f"""
         <div style="background:#111827;border:1px solid #00d4ff;border-radius:8px;
                     padding:10px 14px;margin-bottom:10px;font-size:.82rem">
           <b style="color:#00d4ff">🎯 V7 역추세 전략 매매 플랜</b><br>
           <span style="color:#6b7280">진입 조건:</span>
           <span style="color:#e8eaf6"> 피보BUY1 + 과매도 2개 이상 + 양봉 확인</span><br>
-          <span style="color:#6b7280">물타기:</span>
-          <span style="color:#ff4757"> 금지</span>
-          <span style="color:#6b7280"> &nbsp;|&nbsp; 불타기:</span>
-          <span style="color:#00ff9d"> 모멘텀 회복 2개 이상 시만</span>
+          <span style="color:#ff4757">물타기 금지</span>
+          <span style="color:#6b7280"> — </span>
+          <span style="color:#00ff9d">불타기: BUY1 진입 후 반등 확인 시 추가 매수 (가격 올라감)</span><br>
+          <span style="color:#6b7280;font-size:.75rem">
+            손절 기준: 피보나치 0.886 레벨 이탈 시 (마지막 지지선)
+          </span>
         </div>""", unsafe_allow_html=True)
-        plan_data = {
-            "구분":       ["BUY1 지정가", "BUY2 (불타기만)", "BUY3 (불타기만)", "손절선 (-10%)", "익절 (+12%)"],
-            "목표가":     [
-                f"${b1:.2f}" if b1 else "대기 중",
-                f"${b2:.2f}" if b2 else "대기 중",
-                f"${b3:.2f}" if b3 else "대기 중",
-                f"${b1*0.90:.2f}" if b1 else "—",
-                f"${b1*1.12:.2f}" if b1 else "—",
-            ],
-            "현재가 대비":[
-                f"{(b1/res['price']-1)*100:+.1f}%" if b1 else "—",
-                f"{(b2/res['price']-1)*100:+.1f}%" if b2 else "—",
-                f"{(b3/res['price']-1)*100:+.1f}%" if b3 else "—",
-                f"{(b1*0.90/res['price']-1)*100:+.1f}%" if b1 else "—",
-                f"{(b1*1.12/res['price']-1)*100:+.1f}%" if b1 else "—",
-            ],
-            "비고": ["슬리피지 0.2% 포함", "모멘텀 회복 후", "모멘텀 회복 후", "평균단가 기준", "트레일링 -15%"],
-        }
+
+        if b1:
+            # 불타기: BUY1보다 위에서 추가 매수
+            buy2_bull = b1 * 1.03   # +3% 반등 확인 시
+            buy3_bull = b1 * 1.06   # +6% 추세 확인 시
+
+            # 손절: 피보 0.886 레벨 (없으면 -5% 타이트하게)
+            if fib886 and fib886 < b1:
+                stop_v7      = fib886
+                stop_pct     = (fib886 / b1 - 1) * 100
+                stop_label   = f"피보 0.886 이탈 ({stop_pct:+.1f}%)"
+            else:
+                stop_v7      = b1 * 0.95
+                stop_pct     = -5.0
+                stop_label   = "BUY1 대비 -5% (0.886 미계산)"
+
+            tp_v7  = b1 * 1.12
+            rr     = abs(tp_v7 - b1) / abs(b1 - stop_v7) if b1 > stop_v7 else 0
+
+            plan_data = {
+                "구분": [
+                    "BUY1 (최초 진입)",
+                    "BUY2 (불타기 +3%)",
+                    "BUY3 (불타기 +6%)",
+                    f"손절선 (Fib 0.886)",
+                    "익절 목표 (+12%)",
+                ],
+                "목표가": [
+                    f"${b1:.2f}",
+                    f"${buy2_bull:.2f}",
+                    f"${buy3_bull:.2f}",
+                    f"${stop_v7:.2f}",
+                    f"${tp_v7:.2f}",
+                ],
+                "현재가 대비": [
+                    f"{(b1/res['price']-1)*100:+.1f}%",
+                    f"{(buy2_bull/res['price']-1)*100:+.1f}%",
+                    f"{(buy3_bull/res['price']-1)*100:+.1f}%",
+                    f"{(stop_v7/res['price']-1)*100:+.1f}%",
+                    f"{(tp_v7/res['price']-1)*100:+.1f}%",
+                ],
+                "비고": [
+                    "과매도+양봉 확인 시",
+                    "모멘텀 회복 2개↑ 시",
+                    "추세 강화 확인 시",
+                    f"{stop_label} → 손익비 {rr:.1f}배",
+                    "트레일링 -15% 병행",
+                ],
+            }
+        else:
+            plan_data = {
+                "구분": ["BUY1 지정가", "BUY2 (불타기)", "BUY3 (불타기)", "손절선", "익절 목표"],
+                "목표가": ["대기 중"] * 5,
+                "현재가 대비": ["—"] * 5,
+                "비고": ["피보나치 BUY 구간 미형성"] * 5,
+            }
 
     else:
         # V5 피보나치 플랜 (기존)
