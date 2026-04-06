@@ -2655,22 +2655,14 @@ elif menu=="🔍 종목 분석" and analyze_btn:
     # ════════════════════════════════════════════════════════
     st.markdown("### 📊 오늘 종가 기준 매매 신호")
 
-    # 최종 추천 전략 표시
-    final_label_now = icon_map.get(final_strat_name, final_strat_name)
-    st.markdown(f"""
-    <div style="background:#111827;border-radius:8px;padding:8px 14px;
-                margin-bottom:8px;display:flex;justify-content:space-between">
-      <span style="color:#6b7280;font-size:.78rem">기준: {datetime.date.today()} 장 마감 종가 ${res['price']:.2f}</span>
-      <span style="color:#00d4ff;font-size:.78rem;font-weight:700">
-        최종 추천 전략: {final_label_now}
-      </span>
-    </div>""", unsafe_allow_html=True)
+    # 최종 추천 전략 표시 (fib_fit_a 계산 후 채워짐)
+    _signal_strat_placeholder = st.empty()
 
     row_now = res["row"]
     price_now = res["price"]
     regime_now = res["regime"]
 
-    # ── 현재 종가 기준 각 전략 신호 계산 ──
+    # ── 현재 종가 기준 각 전략 신호 계산 (지표값만 미리 계산) ──
     # V6 모멘텀 신호
     ma20_now  = float(row_now.get("MA20", 0))
     ma60_now  = float(row_now.get("MA60", 1))
@@ -2699,186 +2691,12 @@ elif menu=="🔍 종목 분석" and analyze_btn:
     fib1 = res["fib_lv"][0]
     fib_near = fib1 and abs(price_now - fib1) / price_now <= 0.03
 
-    # ── 전략별 신호 판단 ──
-    # 최종 추천 전략 기반으로 신호 판단
-    if "V6" in final_strat_name:
-        rec_model = "V6"
-        model_signal = v6_signal
-        model_score  = v6_count
-        model_total  = 4
-    elif "V7" in final_strat_name:
-        rec_model = "V7"
-        model_signal = v7_signal
-        model_score  = v7_score_now2
-        model_total  = 4
-    elif "V5" in final_strat_name:
-        rec_model = "V5"
-        model_signal = bool(fib_near)
-        model_score  = 1 if fib_near else 0
-        model_total  = 1
-    else:
-        rec_model = "없음"
-        model_signal = False
-        model_score  = 0
-        model_total  = 0
+    # ── rec_model/신호 배너/체크리스트는 fib_fit_a 계산 후 결정 ──
+    # (아래 종목 적합도 섹션에서 final_strat_name 확정 후 채워짐)
+    _sig_banner_placeholder   = st.empty()
+    _sig_checklist_placeholder = st.empty()
 
-    # DOWNtrend 오버라이드
-    if regime_now == "DOWNtrend":
-        rec_model = "없음"
-        model_signal = False
-
-    # ── 신호 표시 ──
-    if regime_now == "DOWNtrend":
-        sig_color = "#ff4757"
-        sig_icon  = "🚫"
-        sig_title = "매수 금지 — 하락장"
-        sig_desc  = "현재 레짐이 DOWNtrend입니다. 매수하지 마세요.\n인버스 ETF(SQQQ, SPXS) 또는 현금 보유를 권장합니다."
-        sig_action = "오늘 할 일: 없음 (관망)"
-    elif model_signal:
-        sig_color = "#00ff9d"
-        sig_icon  = "🟢"
-        sig_title = f"매수 신호 — {rec_model} 전략"
-        if rec_model == "V6":
-            sig_desc  = f"모멘텀 조건 {v6_count}/4 충족 — 내일 시가 기준 매수 진입"
-        elif rec_model == "V7":
-            sig_desc  = f"과매도 조건 {v7_score_now2}/4 + 양봉 확인 — 내일 지정가 매수"
-        else:
-            sig_desc  = f"피보나치 BUY1 근접 — 조건 추가 확인 후 진입"
-        sig_action = "오늘 할 일: 내일 지정가 주문 준비 ↓"
-    elif v7_score_now2 >= 2 and not bull_c_now:
-        sig_color = "#ffd700"
-        sig_icon  = "⚡"
-        sig_title = f"V7 과매도 감지 — 양봉 대기"
-        sig_desc  = f"과매도 조건 {v7_score_now2}/4 충족. 오늘 양봉(종가>시가) 미확인.\n내일 시가 확인 후 양봉이면 진입."
-        sig_action = "오늘 할 일: 내일 장 시작 후 양봉 확인 후 매수"
-    elif fib1 and (price_now - fib1)/price_now <= 0.08:
-        sig_color = "#ffd700"
-        sig_icon  = "🟡"
-        sig_title = f"피보나치 BUY1 근접 대기"
-        sig_desc  = f"BUY1 ${fib1:.2f}까지 {(fib1/price_now-1)*100:+.1f}% — 진입 구간 접근 중"
-        sig_action = "오늘 할 일: 지정가 주문 대기"
-    else:
-        sig_color = "#6b7280"
-        sig_icon  = "⏳"
-        sig_title = "신호 없음 — 대기"
-        sig_desc  = "현재 매수/매도 신호 없음. 조건 미충족."
-        sig_action = "오늘 할 일: 없음 (다음 분석 대기)"
-
-    # 신호 메인 배너
-    st.markdown(f"""
-    <div style="background:#0f172a;border:2px solid {sig_color};
-                border-radius:14px;padding:18px;margin-bottom:12px">
-      <div style="font-size:1.6rem;margin-bottom:8px">{sig_icon}</div>
-      <div style="color:{sig_color};font-weight:700;font-size:1.1rem;
-                  margin-bottom:6px">{sig_title}</div>
-      <div style="color:#9ca3af;font-size:.82rem;line-height:1.8;
-                  white-space:pre-line">{sig_desc}</div>
-      <div style="margin-top:12px;padding:8px 12px;background:#111827;
-                  border-radius:8px;color:{sig_color};font-size:.82rem;
-                  font-weight:700">{sig_action}</div>
-    </div>""", unsafe_allow_html=True)
-
-    # ── 전략별 조건 체크리스트 ──
-    if regime_now != "DOWNtrend":
-        # 최종 추천 전략 탭을 첫 번째로
-        if "V7" in final_strat_name:
-            tab_order = [f"🎯 V7 역추세 ({v7_score_now2}/4)",
-                         f"🚀 V6 모멘텀 ({v6_count}/4)",
-                         f"📐 V5 피보나치"]
-        elif "V6" in final_strat_name:
-            tab_order = [f"🚀 V6 모멘텀 ({v6_count}/4)",
-                         f"🎯 V7 역추세 ({v7_score_now2}/4)",
-                         f"📐 V5 피보나치"]
-        else:
-            tab_order = [f"📐 V5 피보나치",
-                         f"🎯 V7 역추세 ({v7_score_now2}/4)",
-                         f"🚀 V6 모멘텀 ({v6_count}/4)"]
-        check_tabs = st.tabs(tab_order)
-
-        with check_tabs[0]:  # V6
-            st.caption("UPtrend 레짐에서 사용. 4조건 중 3개 이상이면 내일 매수")
-            checks = [
-                ("MA20 > MA60 (골든크로스)", v6_c1,
-                 f"MA20:{ma20_now:.1f} vs MA60:{ma60_now:.1f}"),
-                ("RSI 45~68 (과열 아님)", v6_c2,
-                 f"현재 RSI: {rsi_now2:.1f}"),
-                ("MACD 히스토그램 양수", v6_c3,
-                 f"현재 MACD Hist: {macd_now:+.4f}"),
-                ("거래량 평균 1.3배 이상", v6_c4,
-                 f"거래량비: {vol_now/volma_now:.2f}배" if volma_now > 0 else "거래량 데이터 없음"),
-            ]
-            for label, ok, detail in checks:
-                color = "#00ff9d" if ok else "#ff4757"
-                icon  = "✅" if ok else "❌"
-                st.markdown(
-                    f"<div style='padding:6px 0;border-bottom:1px solid #1e2d4a'>"
-                    f"<span style='color:{color}'>{icon}</span> "
-                    f"<span style='color:#e8eaf6;font-size:.85rem'>{label}</span>"
-                    f"<span style='color:#6b7280;font-size:.75rem;float:right'>{detail}</span>"
-                    f"</div>", unsafe_allow_html=True
-                )
-            if v6_count >= 3:
-                st.success(f"✅ V6 진입 조건 충족 ({v6_count}/4) — 내일 시가에 매수")
-            else:
-                st.info(f"⏳ V6 조건 미충족 ({v6_count}/4) — {4-v6_count}개 더 필요")
-
-        with check_tabs[1]:  # V7
-            st.caption("RANGE 레짐에서 사용. 과매도 2개 이상 + 양봉이면 내일 매수")
-            checks7 = [
-                ("Z-Score < -2 (통계적 극단 과매도)", zscore_now2 < -2,
-                 f"현재 Z-Score: {zscore_now2:.2f}"),
-                ("볼린저밴드 하단 터치", bool(bb_now2),
-                 "하단 터치 중" if bb_now2 else "하단 위에 있음"),
-                ("RSI < 30 (과매도)", rsi_os_now,
-                 f"현재 RSI: {rsi_now2:.1f}"),
-                ("StochRSI < 20 (과매도)", stoch_os_now,
-                 f"현재 StochRSI: {float(row_now.get('StochRSI',50)):.1f}"),
-            ]
-            for label, ok, detail in checks7:
-                color = "#00ff9d" if ok else "#ff4757"
-                icon  = "✅" if ok else "❌"
-                st.markdown(
-                    f"<div style='padding:6px 0;border-bottom:1px solid #1e2d4a'>"
-                    f"<span style='color:{color}'>{icon}</span> "
-                    f"<span style='color:#e8eaf6;font-size:.85rem'>{label}</span>"
-                    f"<span style='color:#6b7280;font-size:.75rem;float:right'>{detail}</span>"
-                    f"</div>", unsafe_allow_html=True
-                )
-            bull_color = "#00ff9d" if bull_c_now else "#ffd700"
-            st.markdown(
-                f"<div style='padding:6px 0;margin-top:4px'>"
-                f"<span style='color:{bull_color}'>{'✅' if bull_c_now else '⚡'}</span> "
-                f"<span style='color:#e8eaf6;font-size:.85rem'>오늘 양봉 확인 (종가>시가)</span>"
-                f"<span style='color:#6b7280;font-size:.75rem;float:right'>"
-                f"{'양봉 확인됨' if bull_c_now else '음봉 — 내일 재확인'}</span>"
-                f"</div>", unsafe_allow_html=True
-            )
-            if v7_signal:
-                st.success(f"✅ V7 진입 조건 충족 ({v7_score_now2}/4 + 양봉) — 내일 지정가 매수")
-            elif v7_score_now2 >= 2:
-                st.warning(f"⚡ 과매도 감지 ({v7_score_now2}/4) — 양봉 미확인, 내일 재확인")
-            else:
-                st.info(f"⏳ V7 조건 미충족 ({v7_score_now2}/4)")
-
-        with check_tabs[2]:  # V5
-            st.caption("RANGE 레짐에서 사용. 피보나치 BUY 구간 도달 시 분할매수")
-            if res["fib_lv"][0]:
-                for i, (lv, price_lv) in enumerate(zip(
-                    ["BUY1","BUY2","BUY3"], res["fib_lv"]
-                )):
-                    if price_lv:
-                        dist = (price_lv/price_now-1)*100
-                        color = "#00ff9d" if abs(dist) <= 3 else "#ffd700" if abs(dist) <= 8 else "#6b7280"
-                        near  = "🟢 진입 구간!" if abs(dist) <= 3 else "🟡 근접" if abs(dist) <= 8 else "⏳ 대기"
-                        st.markdown(
-                            f"<div style='padding:8px 0;border-bottom:1px solid #1e2d4a'>"
-                            f"<span style='color:{color};font-weight:700'>{lv}: ${price_lv:.2f}</span>"
-                            f"<span style='color:{color};font-size:.8rem;margin-left:8px'>{dist:+.1f}%</span>"
-                            f"<span style='color:{color};float:right;font-size:.8rem'>{near}</span>"
-                            f"</div>", unsafe_allow_html=True
-                        )
-            else:
-                st.info("피보나치 BUY 구간 미형성 — 조정 후 재분석")
+    # (신호 배너+체크리스트는 fib_fit_a 계산 후 _sig_banner/checklist_placeholder에 채워짐)
     st.markdown("---")
     ticker_type_a = classify_ticker_type(ticker_input, res["df"])
     # ── 종목 적합도 분석 ─────────────────────────────────────
@@ -3014,6 +2832,124 @@ elif menu=="🔍 종목 분석" and analyze_btn:
         • {rec_detail2}
       </div>
     </div>""", unsafe_allow_html=True)
+
+    # ── 매매 신호 배너도 확정된 전략으로 채우기 ──────────
+    _signal_strat_placeholder.markdown(f"""
+    <div style="background:#111827;border-radius:8px;padding:8px 14px;
+                margin-bottom:8px;display:flex;justify-content:space-between">
+      <span style="color:#6b7280;font-size:.78rem">
+        기준: {datetime.date.today()} 장 마감 종가 ${res['price']:.2f}
+      </span>
+      <span style="color:#00d4ff;font-size:.78rem;font-weight:700">
+        최종 추천: {final_label2}
+      </span>
+    </div>""", unsafe_allow_html=True)
+
+    # ── 신호 판단 (final_strat_name 확정 후) ──────────────
+    if "V6" in final_strat_name:
+        rec_model = "V6"; model_signal = v6_signal; model_score = v6_count
+    elif "V7" in final_strat_name:
+        rec_model = "V7"; model_signal = v7_signal; model_score = v7_score_now2
+    else:
+        rec_model = "V5"; model_signal = bool(fib_near); model_score = 1 if fib_near else 0
+    if regime_now == "DOWNtrend":
+        rec_model = "없음"; model_signal = False
+
+    # 신호 배너
+    if regime_now == "DOWNtrend":
+        sig_color="#ff4757"; sig_icon="🚫"
+        sig_title="매수 금지 — 하락장"
+        sig_desc="현재 레짐이 DOWNtrend입니다. 매수하지 마세요.\n인버스 ETF(SQQQ, SPXS) 또는 현금 보유를 권장합니다."
+        sig_action="오늘 할 일: 없음 (관망)"
+    elif model_signal:
+        sig_color="#00ff9d"; sig_icon="🟢"
+        sig_title=f"매수 신호 — {rec_model} 전략"
+        sig_desc = (f"모멘텀 조건 {v6_count}/4 충족 — 내일 시가 기준 매수 진입" if rec_model=="V6"
+                    else f"과매도 조건 {v7_score_now2}/4 + 양봉 확인 — 내일 지정가 매수" if rec_model=="V7"
+                    else f"피보나치 BUY1 근접 — 조건 추가 확인 후 진입")
+        sig_action="오늘 할 일: 내일 지정가 주문 준비 ↓"
+    elif v7_score_now2 >= 2 and not bull_c_now:
+        sig_color="#ffd700"; sig_icon="⚡"
+        sig_title="V7 과매도 감지 — 양봉 대기"
+        sig_desc=f"과매도 조건 {v7_score_now2}/4 충족. 오늘 양봉(종가>시가) 미확인.\n내일 시가 확인 후 양봉이면 진입."
+        sig_action="오늘 할 일: 내일 장 시작 후 양봉 확인 후 매수"
+    elif fib1 and (price_now - fib1)/price_now <= 0.08:
+        sig_color="#ffd700"; sig_icon="🟡"
+        sig_title="피보나치 BUY1 근접 대기"
+        sig_desc=f"BUY1 ${fib1:.2f}까지 {(fib1/price_now-1)*100:+.1f}% — 진입 구간 접근 중"
+        sig_action="오늘 할 일: 지정가 주문 대기"
+    else:
+        sig_color="#6b7280"; sig_icon="⏳"
+        sig_title="신호 없음 — 대기"
+        sig_desc="현재 매수/매도 신호 없음. 조건 미충족."
+        sig_action="오늘 할 일: 없음 (다음 분석 대기)"
+
+    _sig_banner_placeholder.markdown(f"""
+    <div style="background:#0f172a;border:2px solid {sig_color};
+                border-radius:14px;padding:18px;margin-bottom:12px">
+      <div style="font-size:1.6rem;margin-bottom:8px">{sig_icon}</div>
+      <div style="color:{sig_color};font-weight:700;font-size:1.1rem;
+                  margin-bottom:6px">{sig_title}</div>
+      <div style="color:#9ca3af;font-size:.82rem;line-height:1.8;
+                  white-space:pre-line">{sig_desc}</div>
+      <div style="margin-top:12px;padding:8px 12px;background:#111827;
+                  border-radius:8px;color:{sig_color};font-size:.82rem;
+                  font-weight:700">{sig_action}</div>
+    </div>""", unsafe_allow_html=True)
+
+    # ── 체크리스트 탭 (최종 전략 첫 번째) ──────────────
+    if regime_now != "DOWNtrend":
+        with _sig_checklist_placeholder.container():
+            if "V7" in final_strat_name:
+                tab_order = [f"🎯 V7 역추세 ({v7_score_now2}/4)",
+                             f"🚀 V6 모멘텀 ({v6_count}/4)", f"📐 V5 피보나치"]
+            elif "V6" in final_strat_name:
+                tab_order = [f"🚀 V6 모멘텀 ({v6_count}/4)",
+                             f"🎯 V7 역추세 ({v7_score_now2}/4)", f"📐 V5 피보나치"]
+            else:
+                tab_order = [f"📐 V5 피보나치",
+                             f"🎯 V7 역추세 ({v7_score_now2}/4)",
+                             f"🚀 V6 모멘텀 ({v6_count}/4)"]
+            check_tabs = st.tabs(tab_order)
+
+            with check_tabs[0]:
+                if "V6" in tab_order[0]:
+                    st.caption("4조건 중 3개 이상 → 내일 시가 매수")
+                    for label,ok,detail in [
+                        ("MA20 > MA60",v6_c1,f"MA20:{ma20_now:.1f} vs MA60:{ma60_now:.1f}"),
+                        ("RSI 45~68",v6_c2,f"RSI:{rsi_now2:.1f}"),
+                        ("MACD 양수",v6_c3,f"MACD:{macd_now:+.4f}"),
+                        ("거래량 1.3배↑",v6_c4,f"{vol_now/volma_now:.2f}배" if volma_now>0 else "-"),
+                    ]:
+                        c="#00ff9d" if ok else "#ff4757"
+                        st.markdown(f"<div style='padding:5px 0;border-bottom:1px solid #1e2d4a'><span style='color:{c}'>{'✅' if ok else '❌'}</span> <span style='color:#e8eaf6;font-size:.84rem'>{label}</span><span style='color:#6b7280;font-size:.74rem;float:right'>{detail}</span></div>",unsafe_allow_html=True)
+                    st.success(f"✅ V6 충족 ({v6_count}/4)") if v6_count>=3 else st.info(f"⏳ V6 미충족 ({v6_count}/4)")
+                elif "V7" in tab_order[0]:
+                    st.caption("과매도 2개↑ + 양봉 → 내일 지정가 매수")
+                    for label,ok,detail in [
+                        ("Z-Score < -2",zscore_now2<-2,f"Z:{zscore_now2:.2f}"),
+                        ("BB 하단 터치",bool(bb_now2),"터치중" if bb_now2 else "위에있음"),
+                        ("RSI < 30",rsi_os_now,f"RSI:{rsi_now2:.1f}"),
+                        ("StochRSI < 20",stoch_os_now,f"Stoch:{float(row_now.get('StochRSI',50)):.1f}"),
+                        ("오늘 양봉",bool(bull_c_now),"양봉✅" if bull_c_now else "음봉⚡"),
+                    ]:
+                        c="#00ff9d" if ok else "#ff4757"
+                        st.markdown(f"<div style='padding:5px 0;border-bottom:1px solid #1e2d4a'><span style='color:{c}'>{'✅' if ok else '❌'}</span> <span style='color:#e8eaf6;font-size:.84rem'>{label}</span><span style='color:#6b7280;font-size:.74rem;float:right'>{detail}</span></div>",unsafe_allow_html=True)
+                    st.success(f"✅ V7 충족 ({v7_score_now2}/4 + 양봉)") if v7_signal else st.warning(f"⚡ 과매도 감지 ({v7_score_now2}/4) — 양봉 미확인") if v7_score_now2>=2 else st.info(f"⏳ V7 미충족 ({v7_score_now2}/4)")
+                else:  # V5
+                    st.caption("피보나치 BUY 구간 도달 시 분할매수")
+                    for lv,pv in zip(["BUY1","BUY2","BUY3"],res["fib_lv"]):
+                        if pv:
+                            d=(pv/price_now-1)*100; c="#00ff9d" if abs(d)<=3 else "#ffd700" if abs(d)<=8 else "#6b7280"
+                            st.markdown(f"<div style='padding:6px 0;border-bottom:1px solid #1e2d4a'><span style='color:{c};font-weight:700'>{lv}: ${pv:.2f}</span><span style='color:{c};font-size:.8rem;margin-left:8px'>{d:+.1f}%</span></div>",unsafe_allow_html=True)
+
+            with check_tabs[1]:
+                st.caption("참고용 체크리스트")
+                st.info("탭 0에서 최종 추천 전략 확인하세요")
+
+            with check_tabs[2]:
+                st.caption("참고용 체크리스트")
+                st.info("탭 0에서 최종 추천 전략 확인하세요")
 
     t_color = "#ff8c00" if ticker_type_a == "고변동성" else "#00d4ff"
     t_icon  = "🔥" if ticker_type_a == "고변동성" else "🧊"
@@ -4657,16 +4593,26 @@ elif menu=="📊 백테스트" and bt_btn:
         st.markdown("---")
 
         # ── 분할매수 통계 ──────────────────────────────────
-        # 실제 적용된 전략 명확히 표시
         st.markdown(f"#### 📊 분할매수 단계별 통계 — {actual_strategy}")
-        if actual_strategy == "모멘텀 추격 전략":
-            st.info("🔥 **모멘텀 전략**: 피보나치 대신 MA20>MA60 + RSI + MACD + 거래량으로 진입 → 익절 +10% / 손절 -5%")
+
+        is_v7  = (actual_strategy == "V7 과매도 역추세 전략")
+        is_v6  = (actual_strategy == "모멘텀 추격 전략")
+
+        # 전략별 설명
+        if is_v7:
+            st.info("🎯 **V7 역추세**: 피보BUY1 + 과매도 2개↑ + 양봉 → 진입 / 물타기 금지 / 불타기만 / 손절 Fib 0.886 / 익절 +12% or 트레일링 -15%")
+        elif is_v6:
+            st.info("🚀 **V6 모멘텀**: MA20>MA60 + RSI + MACD + 거래량 3/4 충족 → 100% 한번에 진입 / 손절 -5% / 트레일링 -20%")
         else:
-            st.info("🧊 **피보나치 전략**: BUY1→BUY2→BUY3 분할매수 → 익절 UP+15%/RANGE+12% / 손절 UP-7%/RANGE-5%")
-        # V7은 키 구조가 다름 — .get()으로 안전하게 접근
-        b1_cnt  = m.get("BUY1 진입",   m.get("BUY1 진입", 0))
-        b2_cnt  = m.get("BUY2 추가",   m.get("BUY2 불타기", 0))
-        b3_cnt  = m.get("BUY3 추가",   m.get("BUY3 불타기", 0))
+            cfg_now2 = ver_cfg
+            tp_pct  = cfg_now2.get("tp", 0.12) * 100
+            st_pct  = cfg_now2.get("stop", 0.05) * 100
+            st.info(f"📐 **V5 피보나치**: BUY1(30%)→BUY2(35%)→BUY3(35%) 분할매수 → 익절 +{tp_pct:.0f}% / 손절 -{st_pct:.0f}% / 물타기+불타기 허용")
+
+        # V7/V6 는 키 구조가 다름 — .get()으로 안전하게 접근
+        b1_cnt  = m.get("BUY1 진입",  0)
+        b2_cnt  = m.get("BUY2 추가",  m.get("BUY2 불타기", 0))
+        b3_cnt  = m.get("BUY3 추가",  m.get("BUY3 불타기", 0))
         b2_bull = m.get("BUY2 불타기", 0)
         b2_bear = m.get("BUY2 물타기", 0)
         b3_bull = m.get("BUY3 불타기", 0)
@@ -4675,30 +4621,68 @@ elif menu=="📊 백테스트" and bt_btn:
         익절    = m.get("익절", 0)
         손절    = m.get("손절", 0)
 
-        is_v7 = (actual_strategy == "V7 과매도 역추세 전략")
-        stage_data = {
-            "단계":  ["BUY1 (1차 진입)", "BUY2 (2차)", "BUY3 (3차)", "SELL (청산)"],
-            "비중":  ["30%", "35%", "35%", "전량"],
-            "전체":  [b1_cnt, b2_cnt, b3_cnt, total],
-            "물타기": ["-", "-" if is_v7 else b2_bear,
-                      "-" if is_v7 else b3_bear, "-"],
-            "불타기": ["-", b2_bull, b3_bull, "-"],
-            "의미":  [
-                "피보나치 BUY1 + 과매도 2개 이상 + 양봉 확인" if is_v7
-                else "피보나치 BUY1 도달 → 1차 진입 (30%)",
-                f"불타기 {b2_bull}건 (모멘텀 회복 확인 후)",
-                f"불타기 {b3_bull}건 (모멘텀 회복 확인 후)",
-                f"익절 {익절}건 / 손절 {손절}건",
-            ],
-        }
+        # 백테스트 거래 내역에서 평균 진입가 계산
+        def avg_price(구분_key):
+            prices = [float(t["가격"]) for t in trades
+                      if t.get("구분") == 구분_key and "가격" in t]
+            return f"${sum(prices)/len(prices):.2f}" if prices else "-"
+
+        if is_v7:
+            stage_data = {
+                "단계":    ["BUY1 (최초 진입)", "BUY2 (불타기)", "BUY3 (불타기)", "SELL (청산)"],
+                "비중":    ["30%", "35%", "35%", "전량"],
+                "횟수":    [b1_cnt, b2_cnt, b3_cnt, total],
+                "평균가":  [avg_price("BUY1"), avg_price("BUY2"), avg_price("BUY3"), avg_price("SELL")],
+                "물/불":   ["-", f"불타기만 {b2_bull}건", f"불타기만 {b3_bull}건", f"익절{익절}/손절{손절}"],
+                "조건":    [
+                    "피보BUY1 + 과매도2개↑ + 양봉",
+                    "모멘텀 회복 2개↑ 후 추가",
+                    "추세 강화 확인 후 추가",
+                    "Fib0.886 손절 or +12% 익절",
+                ],
+            }
+        elif is_v6:
+            stage_data = {
+                "단계":    ["진입 (100%)", "—", "—", "SELL (청산)"],
+                "비중":    ["100%", "-", "-", "전량"],
+                "횟수":    [b1_cnt, "-", "-", total],
+                "평균가":  [avg_price("BUY1"), "-", "-", avg_price("SELL")],
+                "물/불":   ["-", "-", "-", f"익절{익절}/손절{손절}"],
+                "조건":    [
+                    "4조건 중 3개↑ 충족 시 전량 진입",
+                    "분할매수 없음",
+                    "분할매수 없음",
+                    "손절-5% or 트레일링-20%",
+                ],
+            }
+        else:
+            stage_data = {
+                "단계":    ["BUY1 (1차 진입)", "BUY2 (2차)", "BUY3 (3차)", "SELL (청산)"],
+                "비중":    ["30%", "35%", "35%", "전량"],
+                "횟수":    [b1_cnt, b2_cnt, b3_cnt, total],
+                "평균가":  [avg_price("BUY1"), avg_price("BUY2"), avg_price("BUY3"), avg_price("SELL")],
+                "물/불":   [
+                    "-",
+                    f"물타기{b2_bear}/불타기{b2_bull}",
+                    f"물타기{b3_bear}/불타기{b3_bull}",
+                    f"익절{익절}/손절{손절}",
+                ],
+                "조건":    [
+                    "피보BUY1 + 조건 2/3 충족",
+                    "피보BUY2 도달 or 모멘텀 회복",
+                    "피보BUY3 도달 or 모멘텀 회복",
+                    "고정 익절 or 손절",
+                ],
+            }
+
         st.dataframe(pd.DataFrame(stage_data), use_container_width=True, hide_index=True,
             column_config={
                 "단계":   st.column_config.TextColumn(width="medium"),
                 "비중":   st.column_config.TextColumn(width="small"),
-                "전체":   st.column_config.TextColumn(width="small"),
-                "물타기": st.column_config.TextColumn(width="small"),
-                "불타기": st.column_config.TextColumn(width="small"),
-                "의미":   st.column_config.TextColumn(width="large"),
+                "횟수":   st.column_config.NumberColumn(width="small"),
+                "평균가": st.column_config.TextColumn(width="small"),
+                "물/불":  st.column_config.TextColumn(width="small"),
+                "조건":   st.column_config.TextColumn(width="large"),
             })
 
         # 불타기 비율 시각화
