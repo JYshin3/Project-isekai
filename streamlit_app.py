@@ -2370,10 +2370,8 @@ elif menu=="🔍 종목 분석" and analyze_btn:
     st.markdown("---")
 
     # ══════════════════════════════════════════════════════
-    # ③ 매매 플랜 + 주문 가격표 (placeholder)
+    # ③ 매매 플랜 + 주문 가격표 (fib_fit_a 계산 후 표시됨)
     # ══════════════════════════════════════════════════════
-    _plan_placeholder  = st.empty()
-    _order_placeholder = st.empty()
     st.markdown("---")
 
     # ══════════════════════════════════════════════════════
@@ -3136,9 +3134,8 @@ elif menu=="🔍 종목 분석" and analyze_btn:
     # ── 매매 플랜 + 주문 가격표는 상단 placeholder에 채워짐 ──
     # (_plan_placeholder, _order_placeholder)
     # 아래 코드가 실제 내용을 채움 (with 블록 사용)
-    with _plan_placeholder.container():
-      st.markdown("#### 📋 매매 플랜")
-
+    # ── 매매 플랜 ──────────────────────────────────────
+    st.markdown("#### 📋 매매 플랜")
     if "V6" in final_strat_name:
         # V6 모멘텀 플랜
         entry_v6 = res["price"] * 1.002
@@ -3286,9 +3283,7 @@ elif menu=="🔍 종목 분석" and analyze_btn:
         })
 
     # ── 내일 지정가 주문 가격표 (_order_placeholder에 채움) ──────
-    with _order_placeholder.container():
-      st.markdown("#### 📋 내일 지정가 주문 가격표")
-
+    st.markdown("#### 📋 내일 지정가 주문 가격표")
     slip       = 0.002
     price_now2 = res["price"]
     row_now2   = res["row"]
