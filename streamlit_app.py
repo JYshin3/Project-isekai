@@ -2353,7 +2353,33 @@ elif menu=="🔍 종목 분석" and analyze_btn:
 
     actual_label = {"6mo":"6개월","1y":"1년","2y":"2년","3y":"3년","5y":"5년"}.get(period_input,"2년")
     st.markdown(f"### 🔍 {ticker_input} 분석 결과")
-    st.caption(f"📅 분석 기간: {actual_label} 데이터 기준 (종가 기준: {datetime.date.today()})")
+    st.caption(f"📅 {actual_label} 데이터 기준 | 종가: {datetime.date.today()} ${res['price']:.2f}")
+
+    # ══════════════════════════════════════════════════════
+    # ① 핵심 요약 카드 (placeholder — fib_fit_a 계산 후 채워짐)
+    # ══════════════════════════════════════════════════════
+    _top_card_placeholder = st.empty()
+
+    # ══════════════════════════════════════════════════════
+    # ② 매매 신호 + 체크리스트 (placeholder)
+    # ══════════════════════════════════════════════════════
+    st.markdown("### 📊 오늘 종가 기준 매매 신호")
+    _signal_strat_placeholder    = st.empty()
+    _sig_banner_placeholder      = st.empty()
+    _sig_checklist_placeholder   = st.empty()
+    st.markdown("---")
+
+    # ══════════════════════════════════════════════════════
+    # ③ 매매 플랜 + 주문 가격표 (placeholder)
+    # ══════════════════════════════════════════════════════
+    _plan_placeholder  = st.empty()
+    _order_placeholder = st.empty()
+    st.markdown("---")
+
+    # ══════════════════════════════════════════════════════
+    # 이하 서포팅 데이터
+    # ══════════════════════════════════════════════════════
+    st.markdown("---")
 
     # ── 3가지 필터 확인 ─────────────────────────────────
     with st.spinner("🛡️ VIX / 섹터 / 어닝 필터 확인 중..."):
@@ -2834,6 +2860,85 @@ elif menu=="🔍 종목 분석" and analyze_btn:
     </div>""", unsafe_allow_html=True)
 
     # ── 매매 신호 배너도 확정된 전략으로 채우기 ──────────
+    # ══════════════════════════════════════════════════════
+    # 핵심 요약 카드 채우기 (final_strat_name 확정 후)
+    # ══════════════════════════════════════════════════════
+    # 진입 방향 결정
+    price_now_top = res["price"]
+    fib1_top      = res["fib_lv"][0]
+    fib886_top    = res.get("fib886")
+
+    if "V6" in final_strat_name:
+        entry_top   = price_now_top * 1.002
+        stop_top    = entry_top * 0.95
+        tp_top      = entry_top * 1.10
+        dir_icon    = "➡️ 시장가"
+        dir_color   = "#00ff9d"
+        dir_desc    = "모멘텀 — 조건 충족 시 내일 시가 즉시 매수"
+    elif "V7" in final_strat_name and fib1_top:
+        entry_top   = fib1_top * 1.002
+        stop_top    = fib886_top if fib886_top and fib886_top < entry_top else entry_top * 0.95
+        tp_top      = fib1_top * 1.12
+        dir_icon    = "🔽 하락 대기"
+        dir_color   = "#00d4ff"
+        dir_desc    = "역추세 — 피보BUY1 도달 + 양봉 확인 후 매수"
+    elif fib1_top:
+        entry_top   = fib1_top * 1.002
+        stop_top    = res["stop_s"] or entry_top * 0.95
+        tp_top      = res["tp_s"]   or entry_top * 1.12
+        dir_icon    = "🔽 하락 대기"
+        dir_color   = "#ffd700"
+        dir_desc    = "피보나치 — BUY1 구간 도달 후 분할 매수"
+    else:
+        entry_top   = price_now_top
+        stop_top    = price_now_top * 0.95
+        tp_top      = price_now_top * 1.12
+        dir_icon    = "⏳ 대기"
+        dir_color   = "#6b7280"
+        dir_desc    = "진입 구간 미형성 — 조정 후 재분석"
+
+    rr_top = abs(tp_top-entry_top)/abs(entry_top-stop_top) if entry_top > stop_top else 0
+    dist_entry = (entry_top/price_now_top-1)*100
+
+    _top_card_placeholder.markdown(f"""
+    <div style="background:#0f172a;border:2px solid {final_color2};
+                border-radius:14px;padding:16px;margin-bottom:8px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <div>
+          <span style="color:{final_color2};font-weight:700;font-size:1.1rem">{ticker_input}</span>
+          <span style="color:#e8eaf6;font-size:1.1rem;margin-left:8px">${price_now_top:.2f}</span>
+          <span style="color:#6b7280;font-size:.75rem;margin-left:6px">현재가</span>
+        </div>
+        <div style="text-align:right">
+          <div style="color:{final_color2};font-size:.8rem;font-weight:700">{final_label2}</div>
+          <div style="color:{dir_color};font-size:.75rem">{dir_icon}</div>
+        </div>
+      </div>
+      <div style="color:#9ca3af;font-size:.75rem;margin-bottom:10px">{dir_desc}</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:6px">
+        <div style="background:#111827;border-radius:8px;padding:8px;text-align:center">
+          <div style="color:#6b7280;font-size:.65rem">📍 현재가</div>
+          <div style="color:#e8eaf6;font-weight:700">${price_now_top:.2f}</div>
+        </div>
+        <div style="background:#111827;border-radius:8px;padding:8px;text-align:center;
+                    border:1px solid {dir_color}44">
+          <div style="color:#6b7280;font-size:.65rem">🟢 진입가</div>
+          <div style="color:{dir_color};font-weight:700">${entry_top:.2f}</div>
+          <div style="color:#6b7280;font-size:.62rem">{dist_entry:+.1f}%</div>
+        </div>
+        <div style="background:#111827;border-radius:8px;padding:8px;text-align:center">
+          <div style="color:#6b7280;font-size:.65rem">🔴 손절</div>
+          <div style="color:#ff4757;font-weight:700">${stop_top:.2f}</div>
+          <div style="color:#6b7280;font-size:.62rem">{(stop_top/entry_top-1)*100:+.1f}%</div>
+        </div>
+        <div style="background:#111827;border-radius:8px;padding:8px;text-align:center">
+          <div style="color:#6b7280;font-size:.65rem">🎯 익절</div>
+          <div style="color:#ffd700;font-weight:700">${tp_top:.2f}</div>
+          <div style="color:#6b7280;font-size:.62rem">손익비 {rr_top:.1f}x</div>
+        </div>
+      </div>
+    </div>""", unsafe_allow_html=True)
+
     _signal_strat_placeholder.markdown(f"""
     <div style="background:#111827;border-radius:8px;padding:8px 14px;
                 margin-bottom:8px;display:flex;justify-content:space-between">
@@ -3028,8 +3133,11 @@ elif menu=="🔍 종목 분석" and analyze_btn:
     mcard(c6,"권장 행동",res["action"],sc)
     st.markdown("---")
 
-    # ── 매매 플랜 표 (최종 추천 전략 기반) ──
-    st.markdown("#### 📋 매매 플랜")
+    # ── 매매 플랜 + 주문 가격표는 상단 placeholder에 채워짐 ──
+    # (_plan_placeholder, _order_placeholder)
+    # 아래 코드가 실제 내용을 채움 (with 블록 사용)
+    with _plan_placeholder.container():
+      st.markdown("#### 📋 매매 플랜")
 
     if "V6" in final_strat_name:
         # V6 모멘텀 플랜
@@ -3177,8 +3285,9 @@ elif menu=="🔍 종목 분석" and analyze_btn:
             "비고":        st.column_config.TextColumn(width="medium"),
         })
 
-    # ── 내일 지정가 주문 가격표 (최종 전략 기반) ────────────
-    st.markdown("#### 📋 내일 지정가 주문 가격표")
+    # ── 내일 지정가 주문 가격표 (_order_placeholder에 채움) ──────
+    with _order_placeholder.container():
+      st.markdown("#### 📋 내일 지정가 주문 가격표")
 
     slip       = 0.002
     price_now2 = res["price"]
