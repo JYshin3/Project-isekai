@@ -4747,15 +4747,13 @@ elif menu=="📊 백테스트" and bt_btn:
             }
         elif is_v6:
             stage_data = {
-                "단계":    ["진입 (100%)", "—", "—", "SELL (청산)"],
-                "비중":    ["100%", "-", "-", "전량"],
-                "횟수":    [b1_cnt, "-", "-", total],
-                "평균가":  [avg_price("BUY1"), "-", "-", avg_price("SELL")],
-                "물/불":   ["-", "-", "-", f"익절{익절}/손절{손절}"],
+                "단계":    ["진입 (100%)", "SELL (청산)"],
+                "비중":    ["100%", "전량"],
+                "횟수":    [b1_cnt, total],
+                "평균가":  [avg_price("BUY1"), avg_price("SELL")],
+                "물/불":   ["-", f"익절{익절}/손절{손절}"],
                 "조건":    [
                     "4조건 중 3개↑ 충족 시 전량 진입",
-                    "분할매수 없음",
-                    "분할매수 없음",
                     "손절-5% or 트레일링-20%",
                 ],
             }
@@ -4841,7 +4839,7 @@ elif menu=="📊 백테스트" and bt_btn:
         # ── 완결 거래 요약 (매수→매도 페어) ───────────────
         st.markdown("#### 🔁 완결 거래 요약 (매수→청산 페어)")
         sells_list = [t for t in trades if t["구분"] == "SELL"]
-        buy_types  = ["BUY1","BUY2","BUY3"]
+        buy_types  = ["BUY1","BUY2","BUY3","BUY"]  # V6는 "BUY" 또는 "BUY1"
         pairs = []
         buy_buffer = []
         for t in trades:
@@ -4859,7 +4857,7 @@ elif menu=="📊 백테스트" and bt_btn:
                     "청산 날짜": t["날짜"],
                     "청산 가격": f"${t['가격']:.2f}",
                     "수익률":    t["수익률"],
-                    "결과":      "✅ 익절" if t["_pnl"] > 0 else "❌ 손절",
+                    "결과":      "✅ 익절" if t.get("_pnl", 0) > 0 else "❌ 손절",
                     "레짐":      t["레짐"],
                 })
                 buy_buffer = []
